@@ -12,19 +12,19 @@ read device
 echo using device: $device
 
 if ! echo "$disks" | awk '{print $2}' | grep $device &>/dev/null; then
-	echo no such device: $device
-	exit 1
+    echo no such device: $device
+    exit 1
 fi
 (
     # gpt table
-	echo g
-	# main partition
-	echo n
-	echo 1
-	echo
-	echo
-	echo
-	echo w
+    echo g
+    # main partition
+    echo n
+    echo 1
+    echo
+    echo
+    echo
+    echo w
 ) | sudo fdisk -w always -W always $device
 
 cryptname=$(echo $device | awk -F'/' '{print $NF}')

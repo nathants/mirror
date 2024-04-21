@@ -1,0 +1,54 @@
+#!/bin/bash
+set -eou pipefail
+
+confirm() {
+    (echo -e "\nproceed? y/n" && read -n1 answer && echo && [ $answer = y ] && echo -e '\nproceeding...\n' || (echo -e '\naborting...\n' && exit 1))
+}
+
+if [ ! -f ~/.mirror ]; then
+    echo fatal: no ~/.mirror file found. add disk blkid uuids to this file
+    exit 1
+fi
+
+drives=$(cat ~/.mirror | while read uuid; do
+    blkid | grep $uuid | cut -d: -f1
+done)
+
+mk-cryptname() {
+    echo $1 | awk -F'/' '{print $NF}' | head -c3
+}
+
+mk-mount() {
+    echo ~/mnt.$1
+}
+
+echo going to mount and unlock:
+for drive in $drives; do
+    if ! echo $drive | grep ^/dev/sd[a-z]1 &>/dev/null; then
+        echo fatal: only /dev/sdX1 is supported, got: $drive
+        exit 1
+    fi
+    cryptname=$(mk-cryptname $drive)
+    mount=$(mk-mount $cryptname)
+    echo
+    echo " " $(sudo fdisk -l | grep ^$drive)
+    echo "   " cryptname: $cryptname
+    echo "   " mount: $mount
+done
+
+confirm
+
+echo "enter disk password:"
+echo
+
+read -s -r password
+
+for drive in $drives; do
+    cryptname=$(mk-cryptname $drive)
+    mount=$(mk-mount $cryptname)
+    echo -n $password | sudo cryptsetup open ${drive} $cryptname --key-file -
+    mkdir -p $mount
+    user=$(whoami)
+    sudo mount /dev/mapper/$cryptname $mount
+    sudo chown $user:$user $mount
+done

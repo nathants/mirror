@@ -1,0 +1,4 @@
+#!/bin/bash
+set -eou pipefail
+-mirror-rebuild-binaries
+~/repos/mirror/cmd/mirror_repair_copies "$@"

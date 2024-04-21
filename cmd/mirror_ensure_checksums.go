@@ -53,14 +53,14 @@ func main() {
 					checksumPath := path + lib.ChecksumSuffix
 					if !lib.FileExists(checksumPath) {
 						checksum := lib.Blake2bChecksum(path)
-						fmt.Println(lib.PreviewString(args.Preview)+mount, "create checksum:", path)
-						fmt.Println(lib.PreviewString(args.Preview)+" ", checksum)
 						if !args.Preview {
 							err := os.WriteFile(checksumPath, []byte(checksum), 0444)
 							if err != nil {
 								panic(err)
 							}
 						}
+						fmt.Println(lib.PreviewString(args.Preview)+mount, "create checksum:", path)
+						fmt.Println(lib.PreviewString(args.Preview)+" ", checksum)
 					}
 				}
 			} else if d.Type()&os.ModeSymlink != 0 {

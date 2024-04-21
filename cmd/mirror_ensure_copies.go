@@ -5,20 +5,10 @@ import (
 	"github.com/alexflint/go-arg"
 	"mirror/lib"
 	"os"
-	"path/filepath"
-	"regexp"
-	"strings"
 )
 
 type ArgsEnsureCopies struct {
 	Preview bool `arg:"-p,--preview"`
-}
-
-type Disk string
-type Path string
-type File struct {
-	Checksum string
-	Symlink  *string
 }
 
 func main() {
@@ -26,53 +16,76 @@ func main() {
 	var args ArgsEnsureCopies
 	arg.MustParse(&args)
 
-	disks := map[Disk]map[Path]File{}
-	_ = disks
+	disks := lib.ScanDisks()
 
-	res := lib.Warn("df -h | grep ^/dev/mapper/sd")
-	if res.Err != nil {
-		panic(res.Err)
-	}
-	fmt.Println(res.Stderr)
-	for _, line := range strings.Split(res.Stdout, "\n") {
-		//fmt.Println(line)
-		parts := regexp.MustCompile(` +`).Split(line, 6)
-		if len(parts) != 6 {
-			fmt.Printf("%#v\n", parts)
-			panic("bad split")
-		}
+	for disk, files := range disks {
+		for path, file := range files {
+			for dstDisk, dstFiles := range disks {
 
-		//mapper := parts[0]
-		//size := parts[1]
-		//used := parts[2]
-		//available := parts[3]
-		//usedPercent := parts[4]
-		mount := parts[5]
+				if disk == dstDisk {
+					continue
+				}
 
-		err := filepath.WalkDir(mount, func(path string, d os.DirEntry, err error) error {
-			if err != nil && filepath.Base(path) != "lost+found" {
-				return err
+				_, ok := dstFiles[path]
+				if !ok {
+
+					if file.ChecksumFile != nil {
+
+						checksumPath := path.RelPath + lib.ChecksumSuffix
+						checksumSrcPath := disk.AbsPath + "/" + checksumPath
+						checksumDstPath := dstDisk.AbsPath + "/" + checksumPath
+
+						if !lib.FileExists(checksumSrcPath) {
+							panic("checksum does not exist: " + checksumSrcPath)
+						}
+
+						srcPath := disk.AbsPath + "/" + path.RelPath
+						dstPath := dstDisk.AbsPath + "/" + path.RelPath
+
+						if !args.Preview {
+							lib.EnsureDirs(dstPath)
+							lib.CopyFile(srcPath, dstPath)
+							lib.CopyFile(checksumSrcPath, checksumDstPath)
+						}
+
+						fmt.Println(
+							lib.PreviewString(args.Preview)+"copied file",
+							path.RelPath,
+							"to",
+							lib.UseTilda(dstDisk.AbsPath),
+						)
+
+					} else if file.Symlink != nil {
+
+						srcPath := disk.AbsPath + "/" + path.RelPath
+						dstPath := dstDisk.AbsPath + "/" + path.RelPath
+
+						target, err := os.Readlink(srcPath)
+						if err != nil {
+							fmt.Println("failed to read symlink", srcPath)
+							panic(err)
+						}
+
+						if !args.Preview {
+							lib.EnsureDirs(dstPath)
+							lib.CopySymlink(srcPath, dstPath)
+						}
+
+						fmt.Println(
+							lib.PreviewString(args.Preview)+"copied symlink",
+							path.RelPath,
+							"->",
+							target,
+							"to",
+							lib.UseTilda(dstDisk.AbsPath),
+						)
+
+					} else {
+						panic("unreachable for: " + path.RelPath)
+					}
+				}
+
 			}
-
-			if d.IsDir() {
-				// dir
-				//fmt.Println(mount, "dir:", path)
-			} else if d.Type().IsRegular() {
-				// file
-
-			} else if d.Type()&os.ModeSymlink != 0 {
-				// symlink
-				//fmt.Println(mount, "symlink:", path)
-			} else {
-				panic("unsupported type: " + path)
-			}
-
-			return nil
-		})
-
-		if err != nil {
-			panic(err)
 		}
-
 	}
 }

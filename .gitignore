@@ -1,0 +1,4 @@
+cmd/mirror_cleanup_checksums
+cmd/mirror_ensure_checksums
+cmd/mirror_ensure_copies
+cmd/mirror_repair_copies
