@@ -5,7 +5,6 @@ import (
 	"github.com/alexflint/go-arg"
 	"mirror/lib"
 	"os"
-	"time"
 )
 
 type ArgsEnsureCopies struct {
@@ -22,29 +21,8 @@ func main() {
 
 	disks := lib.ScanDisks()
 
-	totalCount := 0
-	for _, files := range disks {
-		for range files {
-			totalCount++
-		}
-	}
-
-	workCount := 0
-	startTime := time.Now()
-	lastTime := time.Now()
-
 	for disk, files := range disks {
 		for path, file := range files {
-
-			workCount++
-			if time.Since(lastTime) > time.Second*1 {
-				lastTime = time.Now()
-				elapsed := time.Since(startTime).Minutes()
-				progress := float64(workCount) / float64(totalCount)
-				estimatedTotalTime := elapsed / progress
-				eta := estimatedTotalTime - elapsed
-				fmt.Printf("\r\033[Kscanning: %.1f%% %.1f minutes remaining", progress*100, eta)
-			}
 
 			for dstDisk, dstFiles := range disks {
 
