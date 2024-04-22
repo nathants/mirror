@@ -44,6 +44,9 @@ func main() {
 				}
 			}()
 			for path, file := range files {
+				if file.Symlink != nil {
+					continue // symlinks have no data to check
+				}
 				srcPath := disk.AbsPath + "/" + path.RelPath
 				checksumActual := lib.Blake2bChecksum(srcPath)
 				results <- &lib.File{
@@ -51,7 +54,6 @@ func main() {
 					Disk:           &disk.AbsPath,
 					ChecksumActual: &checksumActual,
 					ChecksumFile:   file.ChecksumFile,
-					Symlink:        file.Symlink,
 				}
 			}
 			results <- nil
