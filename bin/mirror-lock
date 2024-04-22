@@ -1,4 +1,4 @@
 #!/bin/bash
 set -eou pipefail
 -mirror-rebuild-binaries
-~/repos/mirror/cmd/mirror_ensure_checksums "$@"
+~/repos/mirror/binaries/mirror_lock "$@"

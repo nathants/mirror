@@ -8,14 +8,13 @@ if [ "$(cat /tmp/mirror.checksum 2>/dev/null)" != "$checksum" ]; then
     echo '[rebuild mirror]' 1>&2
     if (
         cd ~/repos/mirror &&
-            go build -o cmd/mirror_cleanup_checksums cmd/mirror_cleanup_checksums.go  &&
-            go build -o cmd/mirror_ensure_checksums cmd/mirror_ensure_checksums.go  &&
-            go build -o cmd/mirror_ensure_copies cmd/mirror_ensure_copies.go  &&
-            go build -o cmd/mirror_repair_copies cmd/mirror_repair_copies.go
+            go build -o binaries/mirror_lock cmd/mirror_lock.go &&
+            go build -o binaries/mirror_unlock cmd/mirror_unlock.go &&
+            go build -o binaries/mirror_ensure_copies cmd/mirror_ensure_copies.go &&
+            go build -o binaries/mirror_repair_copies cmd/mirror_repair_copies.go
     ); then
         echo "$checksum" >/tmp/mirror.checksum
     else
         return 1
     fi
 fi
-

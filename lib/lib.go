@@ -111,43 +111,35 @@ func PreviewString(preview bool) string {
 }
 
 func CopySymlink(src, dst string) {
-
 	target, err := os.Readlink(src)
 	if err != nil {
 		panic(err)
 	}
-
 	err = os.Symlink(target, dst)
 	if err != nil {
 		panic(err)
 	}
-
 }
 
 func CopyFile(src, dst string) {
-
+	EnsureChmod(dst, 0744)
+	os.Stdout.Sync()
 	sourceFile, err := os.Open(src)
 	if err != nil {
 		panic(err)
 	}
 	defer sourceFile.Close()
-
 	destFile, err := os.Create(dst)
 	if err != nil {
 		panic(err)
 	}
-	defer destFile.Close()
 
+	defer destFile.Close()
 	_, err = io.Copy(destFile, sourceFile)
 	if err != nil {
 		panic(err)
 	}
-
-	err = os.Chmod(dst, 0444)
-	if err != nil {
-		panic(err)
-	}
-
+	EnsureChmod(dst, 0444)
 }
 
 var home string
@@ -186,6 +178,71 @@ type File struct {
 	Relpath        *string
 }
 
+func EnsureChmod(path string, mode os.FileMode) {
+	info, err := os.Stat(path)
+	if err != nil {
+		panic(err)
+	}
+	if info.Mode().Perm() != mode {
+		err := os.Chmod(path, mode)
+		if err != nil {
+			panic(err)
+		}
+	}
+}
+
+func LockDirs(locked bool) {
+
+	disks := map[Disk]map[Path]File{}
+
+	res := Warn("df -h | grep ^/dev/mapper/sd")
+	if res.Err != nil {
+		panic(res.Err)
+	}
+	for _, line := range strings.Split(res.Stdout, "\n") {
+		//fmt.Println(line)
+		parts := regexp.MustCompile(` +`).Split(line, 6)
+		if len(parts) != 6 {
+			fmt.Printf("%#v\n", parts)
+			panic("bad split")
+		}
+
+		//mapper := parts[0]
+		//size := parts[1]
+		//used := parts[2]
+		//available := parts[3]
+		//usedPercent := parts[4]
+		disk := parts[5]
+
+		disks[Disk{disk}] = make(map[Path]File)
+
+		if locked {
+			EnsureChmod(disk, 0544)
+		} else {
+			EnsureChmod(disk, 0744)
+		}
+
+		err := filepath.WalkDir(disk, func(absPath string, d os.DirEntry, err error) error {
+
+			if err != nil && filepath.Base(absPath) != "lost+found" {
+				return err
+			}
+			if d.IsDir() && filepath.Base(absPath) != "lost+found" {
+				if locked {
+					EnsureChmod(absPath, 0544)
+				} else {
+					EnsureChmod(absPath, 0744)
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			panic(err)
+		}
+
+	}
+}
+
 func ScanDisks() map[Disk]map[Path]File {
 
 	disks := map[Disk]map[Path]File{}
@@ -212,9 +269,9 @@ func ScanDisks() map[Disk]map[Path]File {
 
 		disks[Disk{disk}] = make(map[Path]File)
 
-		err := filepath.WalkDir(disk, func(path string, d os.DirEntry, err error) error {
+		err := filepath.WalkDir(disk, func(absPath string, d os.DirEntry, err error) error {
 
-			if err != nil && filepath.Base(path) != "lost+found" {
+			if err != nil && filepath.Base(absPath) != "lost+found" {
 				return err
 			}
 
@@ -222,34 +279,40 @@ func ScanDisks() map[Disk]map[Path]File {
 				// dir
 			} else if d.Type().IsRegular() {
 				// file
-				if !strings.HasSuffix(path, ChecksumSuffix) {
-					checksumPath := path + ChecksumSuffix
-					data, err := os.ReadFile(checksumPath)
+				if !strings.HasSuffix(absPath, ChecksumSuffix) {
+					EnsureChmod(absPath, 0444)
+					checksumAbsPath := absPath + ChecksumSuffix
+					if !FileExists(checksumAbsPath) {
+						checksum := Blake2bChecksum(absPath)
+						WriteFile(checksumAbsPath, checksum)
+						fmt.Println("created checksum file:", absPath, checksum)
+					}
+					EnsureChmod(checksumAbsPath, 0444)
+					data, err := os.ReadFile(checksumAbsPath)
 					if err != nil {
-						fmt.Println("fatal: missing checksum", checksumPath)
 						panic(err)
 					}
 					checksum := string(data)
-					relPath := strings.Replace(path, disk+"/", "", 1)
+					relPath := strings.Replace(absPath, disk+"/", "", 1)
 					disks[Disk{disk}][Path{relPath}] = File{
 						ChecksumFile: &checksum,
 					}
 				}
 			} else if d.Type()&os.ModeSymlink != 0 {
 				// symlink
-				link, err := os.Readlink(path)
+				link, err := os.Readlink(absPath)
 				if err != nil {
 					panic(err)
 				}
 				if !strings.HasPrefix(link, "../") {
 					panic("only relative symlinks are supported, not: " + link)
 				}
-				relPath := strings.Replace(path, disk+"/", "", 1)
+				relPath := strings.Replace(absPath, disk+"/", "", 1)
 				disks[Disk{disk}][Path{relPath}] = File{
 					Symlink: &link,
 				}
 			} else {
-				panic("unsupported type: " + path)
+				panic("unsupported type: " + absPath)
 			}
 			return nil
 		})
@@ -313,4 +376,14 @@ func PromptProceed(prompt string) error {
 		return fmt.Errorf("prompt failed")
 	}
 	return nil
+}
+
+func WriteFile(path string, value string) {
+	if FileExists(path) {
+		EnsureChmod(path, 0644)
+	}
+	err := os.WriteFile(path, []byte(value), 0444)
+	if err != nil {
+		panic(err)
+	}
 }

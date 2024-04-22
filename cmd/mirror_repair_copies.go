@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/alexflint/go-arg"
 	"mirror/lib"
+	"sort"
 	"time"
 )
 
@@ -11,10 +12,18 @@ type ArgsRepairCopies struct {
 	Preview bool `arg:"-p,--preview"`
 }
 
+type Checksum struct {
+	Checksum string
+	Count    int
+}
+
 func main() {
 
 	var args ArgsRepairCopies
 	arg.MustParse(&args)
+
+	lib.LockDirs(false)
+	defer lib.LockDirs(true)
 
 	disks := lib.ScanDisks()
 
@@ -89,9 +98,7 @@ func main() {
 
 	toRepair := map[lib.Path][]lib.File{}
 	for path, fs := range files {
-		needsRepair := false
-		checksumFiles := map[string]int{}
-		checksumActuals := map[string]int{}
+		counts := map[string]int{}
 		for _, file := range fs {
 			if *file.Relpath != path.RelPath {
 				panic(fmt.Sprintln("path mismatch", *file.Relpath, path.RelPath))
@@ -99,19 +106,10 @@ func main() {
 			if file.Symlink != nil {
 				continue // symlink has no data to check
 			}
-			if *file.ChecksumFile != *file.ChecksumActual {
-				needsRepair = true
-			}
-			checksumActuals[*file.ChecksumActual]++
-			checksumFiles[*file.ChecksumFile]++
+			counts[*file.ChecksumActual]++
+			counts[*file.ChecksumFile]++
 		}
-		if len(checksumActuals) != 1 {
-			needsRepair = true
-		}
-		if len(checksumFiles) != 1 {
-			needsRepair = true
-		}
-		if needsRepair {
+		if len(counts) != 1 {
 			toRepair[path] = fs
 			fmt.Println()
 			fmt.Println(path.RelPath)
@@ -122,35 +120,59 @@ func main() {
 			}
 		}
 	}
-	lib.PromptProceed("going to repair these files from the mirror.")
+	if len(toRepair) == 0 {
+		return
+	}
+
+	err := lib.PromptProceed("\ngoing to repair these files from the mirror.\n")
+	if err != nil {
+		panic(err)
+	}
 
 	for path, fs := range toRepair {
-		checksumActuals := map[string]int{}
-		checksumFiles := map[string]int{}
+		counts := map[string]int{}
+		var checksums []Checksum
 		for _, file := range fs {
-			checksumActuals[*file.ChecksumActual]++
-			checksumFiles[*file.ChecksumFile]++
+			counts[*file.ChecksumActual]++
+			counts[*file.ChecksumFile]++
 		}
-		if len(checksumActuals) == 1 {
-			// checksomeFiles got corrupted, rewrite them
-		} else if len(checksumActuals) == 0 {
-			panic("unreachable")
-		} else {
-			// mirrors data has diverged
-			if len(disks) == 1 {
-				panic("with only 1 mirror we cannot repair")
-			} else {
-				if len(checksumFiles) == 1 {
-					// checksum files agree, find this object and repair from it.
-					// TODO logic
-				} else {
-					// compare checksumFiles and checksumActuals and see if there is a most common checksum.
-					// TODO list all scenarios we need to handle here. consider when there are 2 mirrors, 3 mirrors, or n mirrors.
-					// TODO logic
-				}
+		for checksum, count := range counts {
+			checksums = append(checksums, Checksum{
+				Checksum: checksum,
+				Count:    count,
+			})
+		}
+		sort.Slice(checksums, func(i, j int) bool {
+			return checksums[i].Count < checksums[j].Count
+		})
+		mostCommonChecksum := lib.Last(checksums)
+		var fileToRepairFrom *lib.File
+		for _, file := range fs {
+			if *file.ChecksumActual == mostCommonChecksum.Checksum {
+				fileToRepairFrom = &file
 			}
-			_ = path
 		}
+		if fileToRepairFrom == nil {
+			panic(fmt.Sprintln("no file found to repair from for:", path.RelPath, mostCommonChecksum.Checksum))
+		}
+		for _, file := range fs {
+			if *file.ChecksumActual != mostCommonChecksum.Checksum {
+				srcPath := *fileToRepairFrom.Disk + "/" + *fileToRepairFrom.Relpath
+				dstPath := *file.Disk + "/" + *file.Relpath
+				if !args.Preview {
+					lib.CopyFile(srcPath, dstPath)
+				}
+				fmt.Println(lib.PreviewString(args.Preview)+"repaired file:", dstPath, "to:", mostCommonChecksum.Checksum)
+			}
+			if *file.ChecksumFile != mostCommonChecksum.Checksum {
+				dstPath := *file.Disk + "/" + *file.Relpath + lib.ChecksumSuffix
+				if !args.Preview {
+					lib.WriteFile(dstPath, mostCommonChecksum.Checksum)
+				}
+				fmt.Println(lib.PreviewString(args.Preview)+"repaired checksumfile:", dstPath, "to:", mostCommonChecksum.Checksum)
+			}
+		}
+
 	}
 
 }

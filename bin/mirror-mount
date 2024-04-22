@@ -6,12 +6,12 @@ confirm() {
 }
 
 if [ ! -f ~/.mirror ]; then
-    echo fatal: no ~/.mirror file found. add disk blkid uuids to this file
+    echo fatal: no ~/.mirror file found. add disk identifiers to this file, from: sudo fdisk -l
     exit 1
 fi
 
 drives=$(cat ~/.mirror | while read uuid; do
-    blkid | grep $uuid | cut -d: -f1
+    sudo fdisk -l | grep $uuid -A3 | grep 'Linux filesystem' | awk '{print $1}'
 done)
 
 mk-cryptname() {
