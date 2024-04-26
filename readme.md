@@ -34,6 +34,8 @@ use a minimum of 2 disks. 3 is better. 4+ is fine for extreme durability.
 
 ## notes
 
+only files, directories, and symlinks are supported.
+
 only immutable data should go in the mirror. make copies instead of mutations. mutations will trigger repair.
 
 when repairing, corrupted files are renamed and not overwritten. they can be inspected later.
