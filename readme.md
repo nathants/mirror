@@ -20,17 +20,17 @@ use a minimum of 2 disks. 3 is better. 4+ is fine for extreme durability.
 
 ## what
 
-[mirror-format.sh](./bin/mirror-format.sh) - interactively select a disk to reformat with ext4 and encrypt with cryptsetup.
+[mirror_format.sh](https://github.com/nathants/mirror/tree/master/bin/mirror_format.sh) - interactively select a disk to reformat with ext4 and encrypt with cryptsetup.
 
-[mirror-mount](./bin/mirror-mount) - unlock and mount all drives listed in ~/.mirror by disk identifier.
+[mirror-mount](https://github.com/nathants/mirror/tree/master/bin/mirror-mount) - unlock and mount all drives listed in ~/.mirror by disk identifier.
 
-[mirror-ensure-copies](./bin/mirror-ensure-copies) - scan each drive, then checksum and copy files as needed.
+[mirror-ensure-copies](https://github.com/nathants/mirror/tree/master/cmd/mirror_ensure_copies.go) - scan each drive, then checksum and copy files as needed.
 
-[mirror-repair-copies](./bin/mirror-repair-copies) - scan each drive, look for checksum mismatches, repair them from valid data if possible.
+[mirror-repair-copies](https://github.com/nathants/mirror/tree/master/bin/mirror_repair_copies.go) - scan each drive, look for checksum mismatches, repair them from valid data if possible.
 
-[mirror-lock](./bin/mirror-lock) - makes all files and directories read only, only needed if you unlocked.
+[mirror-lock](https://github.com/nathants/mirror/tree/master/cmd/mirror_lock.go) - makes all files and directories read only, only needed if you unlocked.
 
-[mirror-unlock](./bin/mirror-unlock) - unlock all files and directories in case you need to make deletions.
+[mirror-unlock](https://github.com/nathants/mirror/tree/master/cmd/mirror_unlock.go) - unlock all files and directories in case you need to make deletions.
 
 ## notes
 
@@ -39,4 +39,3 @@ only files, directories, and symlinks are supported.
 only immutable data should go in the mirror. make copies instead of mutations. mutations will trigger repair.
 
 when repairing, corrupted files are renamed and not overwritten. they can be inspected later.
-
