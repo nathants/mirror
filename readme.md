@@ -10,7 +10,7 @@ zfs is too complex. raid doesn't protect against bitrot. we need something simpl
 
 ## how
 
-several spinning rust disks form a local mirror.
+on a linux system, several spinning rust disks form a local mirror using ext4 and cryptsetup.
 
 write immutable data to any of them, then mirror it to all of them.
 
@@ -39,3 +39,5 @@ only files, directories, and symlinks are supported.
 only immutable data should go in the mirror. make copies instead of mutations. mutations will trigger repair.
 
 when repairing, corrupted files are renamed and not overwritten. they can be inspected later.
+
+linux only. might work on macos or windows with modifications.
