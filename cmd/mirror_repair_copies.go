@@ -214,4 +214,7 @@ func main() {
 
 	}
 
+	elapsed := time.Since(startTime).Minutes()
+	fmt.Println("total runtime:", elapsed, "minutes")
+
 }
