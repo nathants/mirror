@@ -26,7 +26,7 @@ use a minimum of 2 disks. 3 is better. 4+ is fine for extreme durability.
 
 [mirror-ensure-copies](https://github.com/nathants/mirror/tree/master/cmd/mirror_ensure_copies.go) - scan each drive, then checksum and copy files as needed.
 
-[mirror-repair-copies](https://github.com/nathants/mirror/tree/master/bin/mirror_repair_copies.go) - scan each drive, look for checksum mismatches, repair them from valid data if possible.
+[mirror-repair-copies](https://github.com/nathants/mirror/tree/master/cmd/mirror_repair_copies.go) - scan each drive, look for checksum mismatches, repair them from valid data if possible.
 
 [mirror-lock](https://github.com/nathants/mirror/tree/master/cmd/mirror_lock.go) - makes all files and directories read only, only needed if you unlocked.
 
