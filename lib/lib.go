@@ -123,7 +123,6 @@ func CopySymlink(src, dst string) {
 
 func CopyFile(src, dst string) {
 	EnsureChmod(dst, 0744)
-	os.Stdout.Sync()
 	sourceFile, err := os.Open(src)
 	if err != nil {
 		panic(err)
