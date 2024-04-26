@@ -2,9 +2,10 @@ package main
 
 import (
 	"fmt"
+	"os"
+
 	"github.com/alexflint/go-arg"
 	"mirror/lib"
-	"os"
 )
 
 type ArgsEnsureCopies struct {

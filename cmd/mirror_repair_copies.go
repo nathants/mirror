@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/alexflint/go-arg"
 	"mirror/lib"
+	"os"
 	"sort"
 	"time"
 )
@@ -161,6 +162,24 @@ func main() {
 			if *file.ChecksumActual != mostCommonChecksum.Checksum {
 				srcPath := *fileToRepairFrom.Disk + "/" + *fileToRepairFrom.Relpath
 				dstPath := *file.Disk + "/" + *file.Relpath
+				if lib.FileExists(dstPath) {
+					corruptedPath := ""
+					count := 0
+					for {
+						corruptedPath = dstPath + ".corrupted." + string(count)
+						if !lib.FileExists(corruptedPath) {
+							break
+						}
+					}
+					if !args.Preview {
+						err := os.Rename(dstPath, corruptedPath)
+						if err != nil {
+							panic(err)
+						}
+
+					}
+					fmt.Println(lib.PreviewString(args.Preview)+"move corrupted file:", dstPath, "to:", corruptedPath)
+				}
 				if !args.Preview {
 					lib.CopyFile(srcPath, dstPath)
 				}
@@ -168,6 +187,24 @@ func main() {
 			}
 			if *file.ChecksumFile != mostCommonChecksum.Checksum {
 				dstPath := *file.Disk + "/" + *file.Relpath + lib.ChecksumSuffix
+				if lib.FileExists(dstPath) {
+					corruptedPath := ""
+					count := 0
+					for {
+						corruptedPath = dstPath + ".corrupted." + string(count)
+						if !lib.FileExists(corruptedPath) {
+							break
+						}
+					}
+					if !args.Preview {
+						err := os.Rename(dstPath, corruptedPath)
+						if err != nil {
+							panic(err)
+						}
+
+					}
+					fmt.Println(lib.PreviewString(args.Preview)+"move corrupted checksumfile:", dstPath, "to:", corruptedPath)
+				}
 				if !args.Preview {
 					lib.WriteFile(dstPath, mostCommonChecksum.Checksum)
 				}
