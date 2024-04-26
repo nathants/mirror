@@ -1,4 +1,5 @@
 #!/bin/bash
 set -eou pipefail
+cd $(dirname $0)/..
 -mirror-rebuild-binaries
-~/repos/mirror/binaries/mirror_unlock "$@"
+./binaries/mirror_unlock "$@"

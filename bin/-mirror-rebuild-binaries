@@ -1,14 +1,12 @@
 #!/bin/bash
 set -eou pipefail
+cd $(dirname $0)/..
 
-#rm -f /tmp/mirror.checksum
-
-checksum=$(find ~/repos/mirror -type f -name '*.go' -o -name 'go.*' | grep -v backups | xargs cat | sha256sum)
+checksum=$(find -type f -name '*.go' -o -name 'go.*' | grep -v backups | xargs cat | sha256sum)
 if [ "$(cat /tmp/mirror.checksum 2>/dev/null)" != "$checksum" ]; then
     echo '[rebuild mirror]' 1>&2
     if (
-        cd ~/repos/mirror &&
-            go build -o binaries/mirror_lock cmd/mirror_lock.go &&
+        go build -o binaries/mirror_lock cmd/mirror_lock.go &&
             go build -o binaries/mirror_unlock cmd/mirror_unlock.go &&
             go build -o binaries/mirror_ensure_copies cmd/mirror_ensure_copies.go &&
             go build -o binaries/mirror_repair_copies cmd/mirror_repair_copies.go
