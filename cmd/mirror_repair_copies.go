@@ -124,6 +124,8 @@ func main() {
 		}
 	}
 	if len(toRepair) == 0 {
+		elapsed := time.Since(startTime).Minutes()
+		fmt.Println("total runtime:", elapsed, "minutes")
 		return
 	}
 
