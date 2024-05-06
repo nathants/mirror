@@ -179,6 +179,9 @@ type File struct {
 
 func EnsureChmod(path string, mode os.FileMode) {
 	info, err := os.Stat(path)
+	if os.IsNotExist(err) {
+		return
+	}
 	if err != nil {
 		panic(err)
 	}

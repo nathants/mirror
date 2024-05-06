@@ -17,14 +17,13 @@ func main() {
 	var args ArgsEnsureCopies
 	arg.MustParse(&args)
 
+	disks := lib.ScanDisks()
+
 	lib.LockDirs(false)
 	defer lib.LockDirs(true)
 
-	disks := lib.ScanDisks()
-
 	for disk, files := range disks {
 		for path, file := range files {
-
 			for dstDisk, dstFiles := range disks {
 
 				if disk == dstDisk {
