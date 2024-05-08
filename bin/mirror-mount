@@ -11,7 +11,10 @@ if [ ! -f ~/.mirror ]; then
 fi
 
 drives=$(cat ~/.mirror | while read uuid; do
-    sudo fdisk -l | grep $uuid -A3 | grep 'Linux filesystem' | awk '{print $1}'
+    if ! sudo fdisk -l | grep $uuid -A3 | grep 'Linux filesystem' | awk '{print $1}'; then
+        echo drive not found: $uuid 1>&2
+        echo 1>&2
+    fi
 done)
 
 mk-cryptname() {
@@ -19,8 +22,24 @@ mk-cryptname() {
 }
 
 mk-mount() {
-    echo ~/mnt.$1
+    echo $(realpath ~/mnt.$1)
 }
+
+drives=$(echo "$drives" | while read drive; do
+    cryptname=$(mk-cryptname $drive)
+    mount=$(mk-mount $cryptname)
+    if df | awk '{print $NF}' | grep ${mount} &>/dev/null; then
+        echo already mounted $drive 1>&2
+        echo 1>&2
+    else
+        echo $drive
+    fi
+done)
+
+if [ -z "$drives" ]; then
+    echo nothing to mount 1>&2
+    exit 1
+fi
 
 echo going to mount and unlock:
 for drive in $drives; do
