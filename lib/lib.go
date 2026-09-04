@@ -1,68 +1,45 @@
 package lib
 
 import (
-	"bytes"
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"os/user"
 	"path/filepath"
-	"regexp"
 	"runtime/debug"
 	"strings"
 	"time"
 
 	"github.com/pkg/term"
 	"golang.org/x/crypto/blake2b"
+	"mirror/internal/mountdisks"
+	"mirror/internal/system"
 )
 
 const (
-	Timeout        = 15 * time.Minute
+	commandTimeout = 15 * time.Minute
 	ChecksumSuffix = ".b2sum"
 )
 
-type WarnResult struct {
-	Stdout string
-	Stderr string
-	Err    error
-}
-
-func Warn(format string, args ...interface{}) *WarnResult {
-	str := fmt.Sprintf(format, args...)
-	str = fmt.Sprintf("set -eou pipefail; %s", str)
-	cmd := exec.Command("bash", "-c", str)
-	var stdout bytes.Buffer
-	cmd.Stdout = &stdout
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	result := make(chan *WarnResult)
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				LogRecover(r)
-			}
-		}()
-		err := cmd.Run()
-		result <- &WarnResult{
-			strings.TrimRight(stdout.String(), "\n"),
-			strings.TrimRight(stderr.String(), "\n"),
-			err,
-		}
-	}()
-	select {
-	case r := <-result:
-		return r
-	case <-time.After(Timeout):
-		_ = cmd.Process.Kill()
-		return &WarnResult{
-			"",
-			"",
-			errors.New("cmd Timeout"),
-		}
+// MountedMirrorRoots returns the currently mounted roots selected by the configured disk PTUUIDs.
+func MountedMirrorRoots() []string {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		panic(fmt.Errorf("determine home directory: %w", err))
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	roots, _, err := mountdisks.MountedRoots(ctx, system.Exec{}, filepath.Join(homeDir, ".mirror", "disks"), homeDir, "/dev/mapper")
+	if err != nil {
+		panic(err)
+	}
+	if len(roots) == 0 {
+		panic("no configured mirror filesystems are mounted")
+	}
+	return roots
 }
 
 func Last[T any](s []T) T {
@@ -194,30 +171,7 @@ func EnsureChmod(path string, mode os.FileMode) {
 }
 
 func LockDirs(locked bool) {
-
-	disks := map[Disk]map[Path]File{}
-
-	res := Warn("df -h | grep ^/dev/mapper/sd")
-	if res.Err != nil {
-		panic(res.Err)
-	}
-	for _, line := range strings.Split(res.Stdout, "\n") {
-		//fmt.Println(line)
-		parts := regexp.MustCompile(` +`).Split(line, 6)
-		if len(parts) != 6 {
-			fmt.Printf("%#v\n", parts)
-			panic("bad split")
-		}
-
-		//mapper := parts[0]
-		//size := parts[1]
-		//used := parts[2]
-		//available := parts[3]
-		//usedPercent := parts[4]
-		disk := parts[5]
-
-		disks[Disk{disk}] = make(map[Path]File)
-
+	for _, disk := range MountedMirrorRoots() {
 		if locked {
 			EnsureChmod(disk, 0544)
 		} else {
@@ -246,29 +200,8 @@ func LockDirs(locked bool) {
 }
 
 func ScanDisks() map[Disk]map[Path]File {
-
 	disks := map[Disk]map[Path]File{}
-
-	res := Warn("df -h | grep ^/dev/mapper/sd")
-	if res.Err != nil {
-		panic(res.Err)
-	}
-	fmt.Println(res.Stderr)
-	for _, line := range strings.Split(res.Stdout, "\n") {
-		//fmt.Println(line)
-		parts := regexp.MustCompile(` +`).Split(line, 6)
-		if len(parts) != 6 {
-			fmt.Printf("%#v\n", parts)
-			panic("bad split")
-		}
-
-		//mapper := parts[0]
-		//size := parts[1]
-		//used := parts[2]
-		//available := parts[3]
-		//usedPercent := parts[4]
-		disk := parts[5]
-
+	for _, disk := range MountedMirrorRoots() {
 		disks[Disk{disk}] = make(map[Path]File)
 
 		err := filepath.WalkDir(disk, func(absPath string, d os.DirEntry, err error) error {
@@ -336,6 +269,9 @@ func LogRecover(r interface{}) {
 	panic(r)
 }
 
+// ErrPromptInterrupted reports Control-C while reading a raw confirmation byte.
+var ErrPromptInterrupted = errors.New("prompt interrupted")
+
 func getch() (string, error) {
 	t, err := term.Open("/dev/tty")
 	if err != nil {
@@ -343,28 +279,29 @@ func getch() (string, error) {
 	}
 	err = term.RawMode(t)
 	if err != nil {
+		_ = t.Close()
 		return "", err
 	}
 	defer func() {
 		_ = t.Restore()
 		_ = t.Close()
 	}()
-	bytes := make([]byte, 1)
-	n, err := t.Read(bytes)
+	return readPromptByte(t)
+}
+
+func readPromptByte(reader io.Reader) (string, error) {
+	var one [1]byte
+	n, err := reader.Read(one[:])
 	if err != nil {
 		return "", err
 	}
-	switch n {
-	case 1:
-		if bytes[0] == 3 {
-			_ = t.Restore()
-			_ = t.Close()
-			os.Exit(1)
-		}
-		return string(bytes), nil
-	default:
+	if n != 1 {
+		return "", io.ErrNoProgress
 	}
-	return "", nil
+	if one[0] == 3 {
+		return "", ErrPromptInterrupted
+	}
+	return string(one[:]), nil
 }
 
 func PromptProceed(prompt string) error {
