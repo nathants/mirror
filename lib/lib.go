@@ -3,13 +3,11 @@ package lib
 import (
 	"context"
 	"errors"
-	"fmt"
-	"os"
 	"path/filepath"
+	"reflect"
 	"time"
 
 	"mirror/internal/mountdisks"
-	"mirror/internal/rootfs"
 	"mirror/internal/system"
 )
 
@@ -27,68 +25,23 @@ func MountedMirrorState(ctx context.Context, home string) (mountdisks.Snapshot, 
 	return state, ctx.Err()
 }
 
-func LockDirs(ctx context.Context, home string, locked bool) error {
+func LockDirs(ctx context.Context, home string, locked bool) (returnErr error) {
 	state, err := MountedMirrorState(ctx, home)
 	if err != nil {
 		return err
 	}
-	return LockRoots(ctx, state.Roots, locked)
-}
-
-// LockRoots applies the accidental-write guard to fixed, revalidated roots.
-// Quarantine and temporary state remain private and are never walked or chmodded.
-func LockRoots(ctx context.Context, paths []string, locked bool) error {
-	var failures []error
-	for _, path := range paths {
-		if err := ctx.Err(); err != nil {
-			return errors.Join(append(failures, err)...)
-		}
-		if err := lockRoot(ctx, path, locked); err != nil {
-			failures = append(failures, err)
-		}
-	}
-	return errors.Join(failures...)
-}
-func lockRoot(ctx context.Context, path string, locked bool) error {
-	root, err := rootfs.Open(path)
+	guard, err := OpenDirectoryGuard(ctx, state.Roots)
 	if err != nil {
 		return err
 	}
-	defer root.Close()
-	if err := root.CheckInternal(); err != nil {
+	defer func() { returnErr = errors.Join(returnErr, guard.Close()) }()
+	// Inventory again after pinning descriptors, before any chmod.
+	current, err := MountedMirrorState(ctx, home)
+	if err != nil {
 		return err
 	}
-	mode := os.FileMode(0744)
-	if locked {
-		mode = 0544
+	if !reflect.DeepEqual(current, state) {
+		return errors.New("mounted mirror state changed before directory guard operation")
 	}
-	var walk func(string) error
-	walk = func(dir string) error {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		entries, err := root.ReadDir(dir)
-		if err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			rel := filepath.Join(dir, entry.Name())
-			if rel == rootfs.Internal || rel == "lost+found" {
-				continue
-			}
-			if entry.IsDir() {
-				if err := walk(rel); err != nil {
-					return err
-				}
-			}
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := root.ChmodDir(dir, mode); err != nil {
-			return fmt.Errorf("set directory guard on %s: %w", filepath.Join(path, dir), err)
-		}
-		return nil
-	}
-	return walk(".")
+	return guard.SetLocked(ctx, locked)
 }

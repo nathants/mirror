@@ -39,6 +39,11 @@ func Run(ctx context.Context, home string, preview bool) (returnErr error) {
 	if len(actions) == 0 {
 		return ctx.Err()
 	}
+	guard, err := lib.OpenDirectoryGuard(ctx, state.Roots)
+	if err != nil {
+		return err
+	}
+	defer func() { returnErr = errors.Join(returnErr, guard.Close()) }()
 	current, err := lib.MountedMirrorState(ctx, home)
 	if err != nil {
 		return err
@@ -49,9 +54,9 @@ func Run(ctx context.Context, home string, preview bool) (returnErr error) {
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		returnErr = errors.Join(returnErr, lib.LockRoots(cleanup, state.Roots, true))
+		returnErr = errors.Join(returnErr, guard.Relock(cleanup))
 	}()
-	if err := lib.LockRoots(ctx, state.Roots, false); err != nil {
+	if err := guard.SetLocked(ctx, false); err != nil {
 		return err
 	}
 	return apply(ctx, actions, false, os.Stdout)

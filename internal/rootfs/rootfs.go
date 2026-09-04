@@ -64,11 +64,17 @@ func (r *Root) Check() error {
 	return nil
 }
 func (r *Root) OpenFile(path string, flags int, mode os.FileMode) (*os.File, error) {
-	if !ValidPath(path) {
-		return nil, fmt.Errorf("invalid root-relative path: %q", path)
-	}
 	if err := r.Check(); err != nil {
 		return nil, err
+	}
+	return r.openFile(path, flags, mode)
+}
+
+// openFile confines access to the retained descriptor, without reopening the
+// root path. Only pinned directory-guard cleanup may use it after path loss.
+func (r *Root) openFile(path string, flags int, mode os.FileMode) (*os.File, error) {
+	if !ValidPath(path) {
+		return nil, fmt.Errorf("invalid root-relative path: %q", path)
 	}
 	fd, err := unix.Openat2(int(r.file.Fd()), path, &unix.OpenHow{Flags: uint64(flags | unix.O_CLOEXEC | unix.O_NOFOLLOW), Mode: uint64(mode.Perm()), Resolve: unix.RESOLVE_BENEATH | unix.RESOLVE_NO_SYMLINKS | unix.RESOLVE_NO_XDEV})
 	if err != nil {
@@ -77,7 +83,13 @@ func (r *Root) OpenFile(path string, flags int, mode os.FileMode) (*os.File, err
 	return os.NewFile(uintptr(fd), filepath.Join(r.path, path)), nil
 }
 func (r *Root) ReadFile(path string, limit int64) ([]byte, error) {
-	f, err := r.OpenFile(path, unix.O_RDONLY|unix.O_NONBLOCK, 0)
+	if err := r.Check(); err != nil {
+		return nil, err
+	}
+	return r.readFile(path, limit)
+}
+func (r *Root) readFile(path string, limit int64) ([]byte, error) {
+	f, err := r.openFile(path, unix.O_RDONLY|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -165,13 +177,6 @@ func (r *Root) SyncDir(path string) error {
 	}
 	return errors.Join(f.Sync(), f.Close())
 }
-func (r *Root) ChmodDir(path string, mode os.FileMode) error {
-	f, err := r.OpenFile(path, unix.O_RDONLY|unix.O_DIRECTORY, 0)
-	if err != nil {
-		return err
-	}
-	return errors.Join(f.Chmod(mode), f.Close())
-}
 func (r *Root) Remove(path string) error {
 	f, name, err := r.parent(path)
 	if err != nil {
@@ -227,17 +232,27 @@ func (r *Root) CreateTemp(dir, prefix string) (*os.File, string, error) {
 
 // CheckInternal is observational. Existing unmarked user content is never adopted.
 func (r *Root) CheckInternal() error {
-	info, err := r.Stat(Internal)
+	if err := r.Check(); err != nil {
+		return err
+	}
+	return r.checkInternal()
+}
+func (r *Root) checkInternal() error {
+	file, err := r.openFile(Internal, unix.O_PATH, 0)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
+	info, err := file.Stat()
+	if err := errors.Join(err, file.Close()); err != nil {
+		return err
+	}
 	if !info.IsDir() || info.Mode().Perm() != 0700 {
 		return fmt.Errorf("reserved directory must be a private real directory: %s", filepath.Join(r.path, Internal))
 	}
-	data, err := r.ReadFile(Internal+"/FORMAT", int64(len(marker)))
+	data, err := r.readFile(Internal+"/FORMAT", int64(len(marker)))
 	if err != nil || string(data) != marker {
 		return fmt.Errorf("reserved directory collision at %s; expected mirror FORMAT marker: %w", filepath.Join(r.path, Internal), errors.Join(err, errors.New("invalid marker")))
 	}

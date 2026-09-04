@@ -35,7 +35,7 @@ X has support from A/B and Y from B/C. Both exceed half of three, so the documen
 
 **Resolution (2026-09-04):** Scanner and consensus now retain sidecar-only evidence. Log v3 records absent data explicitly; older logs require a fresh scan because their evidence may be incomplete. Evidence-only entries are neither sources nor repair targets, and resume/completion revalidate both data absence and exact sidecar bytes. The original review probe now passes. Permanent tests in `internal/repaircopies/sidecar_evidence_test.go` cover ambiguity, a necessary sidecar-only vote, malformed evidence, absent-mirror denominators, source requirements, preview, save/load, resume, evidence drift, completion, and old-log rejection. Ensure's scanner consumer is adapted without changing its separate missing-copy recovery policy. `go run ./bin/check.go` passes, including race tests, vet, staticcheck, and module/wrapper checks.
 
-### 2. P1 — Relock cleanup can chmod a different filesystem/directory after root loss
+### 2. [done] P1 — Relock cleanup can chmod a different filesystem/directory after root loss
 
 **Location:** `internal/repaircopies/command.go:121-130`; `internal/ensurecopies/ensurecopies.go:49-57`; `lib/lib.go:40-58`.
 
@@ -44,6 +44,8 @@ Cleanup retains root path strings, not the identities/descriptors of the directo
 **Evidence:** `TestAuditCleanupDoesNotChmodReplacementRoot` replaced a temporary root during the post-unlock snapshot callback, then returned a mount-loss error. Cleanup changed the unrelated replacement from `0700` to `0544`; the original directory remained `0744`. This simulates path replacement without mounting or unmounting a host filesystem.
 
 **Recommendation:** Carry verified root identities/owned descriptors through unlock, apply, and cleanup. Refuse to chmod a replacement path; restore only directories belonging to the operation's original roots. Apply the same ownership discipline to ordinary lock/unlock operations.
+
+**Resolution (2026-09-04):** Copy/repair workflows now own a `DirectoryGuard` with retained root descriptors until relock and close. Cleanup walks only the originally opened filesystems and chmods opened directory descriptors, while normal lock/unlock revalidates every root before mutation. The path-only `LockRoots` and reopening `ChmodDir` paths were removed. `TestRepairCleanupRelocksOriginalRootNotReplacement` first reproduced both wrong replacement modes and original directories left unlocked; it now verifies originals are `0544`, replacements remain `0700`, data is unchanged, and the log remains pending. Additional guard/rootfs tests cover absent paths, symlink replacements, ancestor redirection during traversal, newly created directories, partial-unlock cancellation, private-namespace exclusion, and full-root preflight. `go run ./bin/check.go` passes, including race tests. These tests use disposable directories, not real host mounts.
 
 ### 3. P1 — Failed or cancelled storage commands are assumed to have made no changes
 

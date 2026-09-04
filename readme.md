@@ -70,7 +70,7 @@ The most recent repair run is stored atomically in `~/.mirror/repair-last.json`.
 
 All commands that operate on disks, including previews, acquire the same non-waiting exclusive lock at `~/.mirror/operation.lock`. A second command fails immediately. Do not remove or replace this file; the kernel releases the lock on process exit. Help requires no lock. Preview may write this runtime lock and a repair scan log, but does not change mirror files or permissions.
 
-SIGINT/SIGTERM cancel inventory, prompts, and work between bounded reads/writes. Cleanup uses an independent timeout and releases the operation lock. Kernel-blocked disk I/O may still delay exit. The lock coordinates mirror commands only: keep other programs and manual writers off these disks during operations. Directory modes are an accidental-write guard, not protection against their owner.
+SIGINT/SIGTERM cancel inventory, prompts, and work between bounded reads/writes. Cleanup uses an independent timeout and releases the operation lock. Copy/repair directory guards retain descriptors for the original mirror roots until relocking finishes. If a root path disappears or is replaced, cleanup attempts to relock only the original filesystem, never the replacement path, and reports the root change. Kernel-blocked disk I/O may still delay exit. The lock coordinates mirror commands only: keep other programs and manual writers off these disks during operations. Directory modes are an accidental-write guard, not protection against their owner.
 
 ## Notes
 

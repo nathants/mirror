@@ -113,17 +113,25 @@ func run(ctx context.Context, homeDir string, preview, resume bool, options comm
 	if err := checkSnapshot(ctx, log, options.snapshot); err != nil {
 		return err
 	}
-	// Validate before chmod too. Register cleanup before the first unlock so even
-	// a partial walk is relocked, using fixed roots and an independent timeout.
+	// Pin roots before unlocking and keep ownership until cleanup finishes.
+	// Revalidate inventory after pinning; cleanup must never reopen root paths.
 	if err := ValidateCurrentState(ctx, log, log.Roots); err != nil {
+		return err
+	}
+	guard, err := lib.OpenDirectoryGuard(ctx, log.Roots)
+	if err != nil {
+		return err
+	}
+	defer func() { returnErr = errors.Join(returnErr, guard.Close()) }()
+	if err := checkSnapshot(ctx, log, options.snapshot); err != nil {
 		return err
 	}
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		returnErr = errors.Join(returnErr, lib.LockRoots(cleanup, log.Roots, true))
+		returnErr = errors.Join(returnErr, guard.Relock(cleanup))
 	}()
-	if err := lib.LockRoots(ctx, log.Roots, false); err != nil {
+	if err := guard.SetLocked(ctx, false); err != nil {
 		return err
 	}
 	if err := checkSnapshot(ctx, log, options.snapshot); err != nil {
