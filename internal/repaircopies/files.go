@@ -196,6 +196,26 @@ func scanRoot(ctx context.Context, root *rootfs.Root, progress func(string, stri
 				continue
 			case entry.Type().IsRegular():
 				if strings.HasSuffix(rel, checksumSuffix) {
+					dataPath := strings.TrimSuffix(rel, checksumSuffix)
+					if err := validateRelativePath(dataPath); err != nil {
+						return err
+					}
+					if _, err := root.Stat(dataPath); err == nil {
+						continue // Existing data is observed with its sidecar below.
+					} else if !errors.Is(err, os.ErrNotExist) {
+						return err
+					}
+					sidecar, err := readSidecar(ctx, root, rel)
+					if err != nil {
+						return err
+					}
+					if sidecar == nil {
+						return fmt.Errorf("sidecar disappeared during scan: %s", rel)
+					}
+					observations[dataPath] = Copy{Root: root.Path(), Sidecar: sidecar}
+					if progress != nil {
+						progress(root.Path(), rel)
+					}
 					continue
 				}
 				actual, err := checksumFile(ctx, root, rel)
@@ -247,6 +267,12 @@ func validateFiles(ctx context.Context, log Log, rs roots, complete bool) error 
 		hasSource := false
 		for _, copy := range repair.Copies {
 			root := rs[copy.Root]
+			if copy.ActualChecksum == "" {
+				if err := validateEvidenceOnly(ctx, root, repair.RelPath, copy.Sidecar); err != nil {
+					return err
+				}
+				continue
+			}
 			actual, err := checksumFile(ctx, root, repair.RelPath)
 			if err != nil {
 				return err
@@ -273,6 +299,27 @@ func validateFiles(ctx context.Context, log Log, rs roots, complete bool) error 
 	return ctx.Err()
 }
 
+// Evidence-only entries are not repair targets. In both resume and completion,
+// data must still be absent and the exact sidecar bytes must remain unchanged.
+func validateEvidenceOnly(ctx context.Context, root *rootfs.Root, path string, expected *Sidecar) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if _, err := root.Stat(path); err == nil {
+		return fmt.Errorf("data appeared at evidence-only path: %s", filepath.Join(root.Path(), path))
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	sidecar, err := readSidecar(ctx, root, path+checksumSuffix)
+	if err != nil {
+		return err
+	}
+	if !equalSidecars(sidecar, expected) {
+		return fmt.Errorf("sidecar-only evidence changed since the logged scan: %s", filepath.Join(root.Path(), path+checksumSuffix))
+	}
+	return ctx.Err()
+}
+
 // Apply requires prior operator confirmation. It confines all I/O to opened
 // mirror roots, validates the entire plan before any mutation, and rechecks
 // destinations after populating verified replacements. Only desired bytes pass
@@ -292,6 +339,9 @@ func Apply(ctx context.Context, log Log, currentRoots []string, preview bool, wr
 	for _, repair := range log.Repairs {
 		var source *rootfs.Root
 		for _, copy := range repair.Copies {
+			if copy.ActualChecksum == "" {
+				continue
+			}
 			actual, err := checksumFile(ctx, rs[copy.Root], repair.RelPath)
 			if err != nil {
 				return err
@@ -305,6 +355,9 @@ func Apply(ctx context.Context, log Log, currentRoots []string, preview bool, wr
 			return fmt.Errorf("no verified source remains for %s", repair.RelPath)
 		}
 		for _, copy := range repair.Copies {
+			if copy.ActualChecksum == "" {
+				continue // Preserve evidence-only sidecars; never fill missing data.
+			}
 			root := rs[copy.Root]
 			actual, err := checksumFile(ctx, root, repair.RelPath)
 			if err != nil {

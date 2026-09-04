@@ -82,3 +82,38 @@ func TestEnsureConflictsFailBeforePublication(t *testing.T) {
 		t.Fatal("conflict published data")
 	}
 }
+
+func TestSidecarOnlyEvidenceIsNotAnEnsureDataCopy(t *testing.T) {
+	paths := []string{t.TempDir(), t.TempDir()}
+	if err := os.WriteFile(filepath.Join(paths[0], "item.b2sum"), []byte("surviving metadata"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(paths[1], "item"), []byte("source data"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	actions, err := plan(context.Background(), paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var missingCopies int
+	for _, action := range actions {
+		if !action.metadata {
+			missingCopies++
+			if action.source != paths[1] || action.destination != paths[0] || action.checksum == "" {
+				t.Fatalf("sidecar-only observation treated as a data copy: %+v", action)
+			}
+		}
+	}
+	if missingCopies != 1 {
+		t.Fatalf("missing data incorrectly considered present: %+v", actions)
+	}
+	// Publication must still refuse the existing sidecar. Recovery of that
+	// collision is a separate ensure policy, not a side effect of repair voting.
+	if err := apply(context.Background(), actions, false, io.Discard); err == nil {
+		t.Fatal("ensure overwrote surviving metadata")
+	}
+	data, err := os.ReadFile(filepath.Join(paths[0], "item.b2sum"))
+	if err != nil || string(data) != "surviving metadata" {
+		t.Fatalf("surviving metadata changed: %q %v", data, err)
+	}
+}

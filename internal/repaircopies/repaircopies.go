@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	LogVersion      = 2
+	LogVersion      = 3
 	StatusScanning  = "scanning"
 	StatusPending   = "pending"
 	StatusClean     = "clean"
@@ -32,6 +32,10 @@ type Sidecar struct {
 	Hash  string `json:"hash"`
 	Value string `json:"value,omitempty"`
 }
+
+// Copy records a mirror's evidence. An empty ActualChecksum means the data
+// path was absent: its sidecar still votes, but neither path is a repair target.
+// Resume and completion require these evidence-only paths to remain unchanged.
 type Copy struct {
 	Root           string   `json:"root"`
 	ActualChecksum string   `json:"actual_checksum"`
@@ -81,17 +85,33 @@ func BuildLog(startedAt, scannedAt time.Time, roots []string, configured int, ob
 			return Log{}, fmt.Errorf("%s: %w", path, err)
 		}
 		clean := true
+		dataChecksum := ""
 		for _, copy := range copies {
-			if copy.ActualChecksum != copies[0].ActualChecksum || copy.Sidecar == nil || copy.Sidecar.Value != copy.ActualChecksum {
+			if copy.ActualChecksum == "" {
+				continue // Evidence only; missing data is not a repair target.
+			}
+			if dataChecksum == "" {
+				dataChecksum = copy.ActualChecksum
+			}
+			if copy.ActualChecksum != dataChecksum || copy.Sidecar == nil || copy.Sidecar.Value != copy.ActualChecksum {
 				clean = false
 			}
 		}
-		if clean {
+		evidenceDisagrees := false
+		for _, copy := range copies {
+			if copy.Sidecar != nil && copy.Sidecar.Value != "" && copy.Sidecar.Value != dataChecksum {
+				evidenceDisagrees = true
+			}
+		}
+		if clean && dataChecksum != "" && !evidenceDisagrees {
 			continue
 		}
 		winner, err := uniqueWinner(copies, configured)
 		if err != nil {
 			return Log{}, fmt.Errorf("cannot safely repair %s: %w", path, err)
+		}
+		if clean && dataChecksum != "" {
+			continue // Consensus confirmed existing data; evidence alone is not repaired.
 		}
 		log.Repairs = append(log.Repairs, Repair{RelPath: path, Checksum: winner, Copies: copies})
 	}
@@ -103,7 +123,9 @@ func BuildLog(startedAt, scannedAt time.Time, roots []string, configured int, ob
 func uniqueWinner(copies []Copy, configured int) (string, error) {
 	counts := make(map[string]int)
 	for _, copy := range copies {
-		counts[copy.ActualChecksum]++
+		if copy.ActualChecksum != "" {
+			counts[copy.ActualChecksum]++
+		}
 		if copy.Sidecar != nil && copy.Sidecar.Value != "" && copy.Sidecar.Value != copy.ActualChecksum {
 			counts[copy.Sidecar.Value]++
 		}
@@ -144,7 +166,11 @@ func PrintRepairs(writer io.Writer, log Log) error {
 					value = "malformed (bytes hash " + copy.Sidecar.Hash + ")"
 				}
 			}
-			fmt.Fprintf(writer, "  disk: %s\n    sidecar: %s\n    actual:  %s\n", copy.Root, value, copy.ActualChecksum)
+			actual := copy.ActualChecksum
+			if actual == "" {
+				actual = "missing (sidecar evidence only; not a repair target)"
+			}
+			fmt.Fprintf(writer, "  disk: %s\n    sidecar: %s\n    actual:  %s\n", copy.Root, value, actual)
 		}
 	}
 	return nil
@@ -237,7 +263,11 @@ func validateCopies(roots []string, copies []Copy) error {
 		if !containsString(roots, copy.Root) {
 			return fmt.Errorf("copy root is not in logged roots: %s", copy.Root)
 		}
-		if !validChecksum(copy.ActualChecksum) {
+		if copy.ActualChecksum == "" {
+			if copy.Sidecar == nil {
+				return errors.New("copy has neither data nor sidecar evidence")
+			}
+		} else if !validChecksum(copy.ActualChecksum) {
 			return errors.New("copy has invalid actual checksum")
 		}
 		if copy.Sidecar != nil {

@@ -74,8 +74,19 @@ func plan(ctx context.Context, paths []string) ([]action, error) {
 		}
 	}
 	all := make(map[string]bool)
-	for path := range observations {
-		all[path] = true
+	for path, copies := range observations {
+		// Scan also returns sidecar-only repair evidence. It is not an
+		// existing data copy or a source for ensure's publication plan.
+		dataCopies := copies[:0]
+		for _, copy := range copies {
+			if copy.ActualChecksum != "" {
+				dataCopies = append(dataCopies, copy)
+			}
+		}
+		observations[path] = dataCopies
+		if len(dataCopies) > 0 {
+			all[path] = true
+		}
 	}
 	for path := range links {
 		all[path] = true
