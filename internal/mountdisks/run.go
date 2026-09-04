@@ -12,6 +12,8 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"mirror/internal/terminal"
 )
 
 var ErrDeclined = errors.New("operation declined")
@@ -105,7 +107,7 @@ func (a *app) mount(ctx context.Context) error {
 
 	fmt.Fprintln(a.out, "going to unlock and mount:")
 	writePlanTable(a.out, actions)
-	if err := a.confirm("mount"); err != nil {
+	if err := a.confirm(ctx, "mount"); err != nil {
 		return err
 	}
 
@@ -245,7 +247,7 @@ func (a *app) unmount(ctx context.Context) error {
 
 	fmt.Fprintln(a.out, "going to unmount and close:")
 	writePlanTable(a.out, actions)
-	if err := a.confirm("unmount"); err != nil {
+	if err := a.confirm(ctx, "unmount"); err != nil {
 		return err
 	}
 	afterIdentifiers, afterPlans, afterMissing, err := a.preflight(ctx)
@@ -331,9 +333,9 @@ func (a *app) validateMountpoint(path string, requireEmpty bool) error {
 	return nil
 }
 
-func (a *app) confirm(action string) error {
+func (a *app) confirm(ctx context.Context, action string) error {
 	fmt.Fprintf(a.out, "type %q to confirm: ", action)
-	answer, err := readLine(a.input)
+	answer, err := terminal.ReadLine(ctx, a.input)
 	if err != nil {
 		return fmt.Errorf("read confirmation: %w", err)
 	}
@@ -350,29 +352,6 @@ func (a *app) outputCommand(ctx context.Context, command string, args ...string)
 
 func (a *app) runCommand(ctx context.Context, stdin io.Reader, command string, args ...string) error {
 	return a.system.Run(ctx, stdin, a.out, a.errOut, command, args...)
-}
-
-func readLine(reader io.Reader) (string, error) {
-	var line []byte
-	var one [1]byte
-	for {
-		count, err := reader.Read(one[:])
-		if count == 1 {
-			if one[0] == '\n' {
-				return strings.TrimSuffix(string(line), "\r"), nil
-			}
-			line = append(line, one[0])
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) && len(line) > 0 {
-				return strings.TrimSuffix(string(line), "\r"), nil
-			}
-			return "", err
-		}
-		if count == 0 {
-			return "", io.ErrNoProgress
-		}
-	}
 }
 
 func writePlanTable(writer io.Writer, plans []diskPlan) {

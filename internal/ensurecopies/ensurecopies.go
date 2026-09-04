@@ -1,72 +1,241 @@
-// Package ensurecopies copies missing files and checksum sidecars across mounted mirror disks.
+// Package ensurecopies ingests checksum metadata and fills missing copies.
 package ensurecopies
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"path/filepath"
+	"reflect"
+	"sort"
+	"strings"
+	"time"
 
+	"mirror/internal/repaircopies"
+	"mirror/internal/rootfs"
 	"mirror/lib"
 )
 
-func Run(preview bool) error {
-	disks := lib.ScanDisks()
+type action struct {
+	source, destination, path, checksum string
+	target                              *string
+	metadata                            bool
+}
 
-	lib.LockDirs(false)
-	defer lib.LockDirs(true)
-
-	for disk, files := range disks {
-		for path, file := range files {
-			for destinationDisk, destinationFiles := range disks {
-				if disk == destinationDisk {
+func Run(ctx context.Context, home string, preview bool) (returnErr error) {
+	state, err := lib.MountedMirrorState(ctx, home)
+	if err != nil {
+		return err
+	}
+	actions, err := plan(ctx, state.Roots)
+	if err != nil {
+		return err
+	}
+	if preview {
+		return apply(ctx, actions, true, os.Stdout)
+	}
+	if len(actions) == 0 {
+		return ctx.Err()
+	}
+	current, err := lib.MountedMirrorState(ctx, home)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(current, state) {
+		return errors.New("mounted mirror state changed during planning")
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		returnErr = errors.Join(returnErr, lib.LockRoots(cleanup, state.Roots, true))
+	}()
+	if err := lib.LockRoots(ctx, state.Roots, false); err != nil {
+		return err
+	}
+	return apply(ctx, actions, false, os.Stdout)
+}
+func plan(ctx context.Context, paths []string) ([]action, error) {
+	observations, err := repaircopies.Scan(ctx, paths)
+	if err != nil {
+		return nil, err
+	}
+	links := make(map[string]map[string]string)
+	for _, path := range paths {
+		root, err := rootfs.Open(path)
+		if err != nil {
+			return nil, err
+		}
+		err = scanLinks(ctx, root, ".", links)
+		closeErr := root.Close()
+		if err := errors.Join(err, closeErr); err != nil {
+			return nil, err
+		}
+	}
+	all := make(map[string]bool)
+	for path := range observations {
+		all[path] = true
+	}
+	for path := range links {
+		all[path] = true
+	}
+	names := make([]string, 0, len(all))
+	for path := range all {
+		names = append(names, path)
+	}
+	sort.Strings(names)
+	var actions []action
+	for _, path := range names {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		copies := observations[path]
+		linkCopies := links[path]
+		if len(copies) > 0 && len(linkCopies) > 0 {
+			return nil, fmt.Errorf("entry type conflict: %s", path)
+		}
+		present := make(map[string]bool)
+		source := ""
+		checksum := ""
+		var target *string
+		if len(copies) > 0 {
+			source = copies[0].Root
+			checksum = copies[0].ActualChecksum
+			for _, copy := range copies {
+				present[copy.Root] = true
+				if copy.ActualChecksum != checksum || (copy.Sidecar != nil && copy.Sidecar.Value != checksum) {
+					return nil, fmt.Errorf("unresolved checksum disagreement for %s; run repair-copies first", path)
+				}
+				if copy.Sidecar == nil {
+					actions = append(actions, action{destination: copy.Root, path: path, checksum: checksum, metadata: true})
+				}
+			}
+		} else {
+			for _, root := range paths {
+				value, found := linkCopies[root]
+				if !found {
 					continue
 				}
-				if _, exists := destinationFiles[path]; exists {
-					continue
-				}
-
-				sourcePath := disk.AbsPath + "/" + path.RelPath
-				destinationPath := destinationDisk.AbsPath + "/" + path.RelPath
-				switch {
-				case file.ChecksumFile != nil:
-					checksumPath := path.RelPath + lib.ChecksumSuffix
-					checksumSourcePath := disk.AbsPath + "/" + checksumPath
-					checksumDestinationPath := destinationDisk.AbsPath + "/" + checksumPath
-					if !lib.FileExists(checksumSourcePath) {
-						return fmt.Errorf("checksum does not exist: %s", checksumSourcePath)
-					}
-					if !preview {
-						lib.EnsureDirs(destinationPath)
-						lib.CopyFile(sourcePath, destinationPath)
-						lib.CopyFile(checksumSourcePath, checksumDestinationPath)
-					}
-					fmt.Println(
-						lib.PreviewString(preview)+"copied file",
-						path.RelPath,
-						"to",
-						lib.UseTilda(destinationDisk.AbsPath),
-					)
-				case file.Symlink != nil:
-					target, err := os.Readlink(sourcePath)
-					if err != nil {
-						return fmt.Errorf("read symlink %s: %w", sourcePath, err)
-					}
-					if !preview {
-						lib.EnsureDirs(destinationPath)
-						lib.CopySymlink(sourcePath, destinationPath)
-					}
-					fmt.Println(
-						lib.PreviewString(preview)+"copied symlink",
-						path.RelPath,
-						"->",
-						target,
-						"to",
-						lib.UseTilda(destinationDisk.AbsPath),
-					)
-				default:
-					return fmt.Errorf("unsupported scanned file: %s", path.RelPath)
+				present[root] = true
+				if target == nil {
+					v := value
+					target = &v
+					source = root
+				} else if *target != value {
+					return nil, fmt.Errorf("symlink disagreement: %s", path)
 				}
 			}
 		}
+		for _, destination := range paths {
+			if present[destination] {
+				continue
+			}
+			root, err := rootfs.Open(destination)
+			if err != nil {
+				return nil, err
+			}
+			_, err = root.Stat(path)
+			root.Close()
+			if !errors.Is(err, os.ErrNotExist) {
+				return nil, fmt.Errorf("unexpected destination entry %s: %w", filepath.Join(destination, path), errors.Join(err, errors.New("not absent")))
+			}
+			actions = append(actions, action{source: source, destination: destination, path: path, checksum: checksum, target: target})
+		}
+	}
+	return actions, nil
+}
+func scanLinks(ctx context.Context, root *rootfs.Root, dir string, links map[string]map[string]string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	entries, err := root.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		rel := filepath.Join(dir, entry.Name())
+		if rel == rootfs.Internal || rel == "lost+found" {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			if err := scanLinks(ctx, root, rel, links); err != nil {
+				return err
+			}
+		} else if entry.Type()&os.ModeSymlink != 0 {
+			target, err := root.Readlink(rel)
+			if err != nil {
+				return err
+			}
+			if !strings.HasPrefix(target, "../") {
+				return fmt.Errorf("only ../ relative symlinks are supported: %s", rel)
+			}
+			// Preserve links as opaque entries, never follow them while copying.
+			if links[rel] == nil {
+				links[rel] = make(map[string]string)
+			}
+			links[rel][root.Path()] = target
+		}
 	}
 	return nil
+}
+func apply(ctx context.Context, actions []action, preview bool, writer io.Writer) error {
+	for _, a := range actions {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if preview {
+			fmt.Fprintf(writer, "preview: publish %s on %s (metadata=%v)\n", a.path, a.destination, a.metadata)
+			continue
+		}
+		var err error
+		switch {
+		case a.metadata:
+			err = repaircopies.PublishMissingSidecar(ctx, a.destination, a.path, a.checksum)
+		case a.target != nil:
+			err = publishLink(ctx, a)
+		default:
+			err = repaircopies.PublishMissing(ctx, a.source, a.destination, a.path, a.checksum)
+		}
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(writer, "published %s on %s (metadata=%v)\n", a.path, a.destination, a.metadata)
+	}
+	return ctx.Err()
+}
+func publishLink(ctx context.Context, a action) error {
+	src, err := rootfs.Open(a.source)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	target, err := src.Readlink(a.path)
+	if err != nil {
+		return err
+	}
+	if target != *a.target {
+		return errors.New("source symlink changed")
+	}
+	dst, err := rootfs.Open(a.destination)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := dst.MkdirAll(filepath.Dir(a.path), 0755); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := dst.Symlink(target, a.path); err != nil {
+		return err
+	}
+	return dst.SyncDir(filepath.Dir(a.path))
 }

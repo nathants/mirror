@@ -1,0 +1,508 @@
+package repaircopies
+
+import (
+	"context"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+
+	"golang.org/x/crypto/blake2b"
+	"golang.org/x/sys/unix"
+	"mirror/internal/cancelio"
+	"mirror/internal/rootfs"
+)
+
+type roots map[string]*rootfs.Root
+
+func openRoots(paths []string) (roots, error) {
+	result := make(roots)
+	for _, path := range paths {
+		r, err := rootfs.Open(path)
+		if err != nil {
+			result.close()
+			return nil, err
+		}
+		result[path] = r
+		if err := r.CheckInternal(); err != nil {
+			result.close()
+			return nil, err
+		}
+	}
+	return result, nil
+}
+func (r roots) close() {
+	for _, root := range r {
+		_ = root.Close()
+	}
+}
+func openRegular(root *rootfs.Root, path string) (*os.File, error) {
+	f, err := root.OpenFile(path, unix.O_RDONLY|unix.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, err
+	}
+	info, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		f.Close()
+		return nil, fmt.Errorf("not a regular file: %s", f.Name())
+	}
+	return f, nil
+}
+func checksumFile(ctx context.Context, root *rootfs.Root, path string) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	f, err := openRegular(root, path)
+	if err != nil {
+		return "", err
+	}
+	h, _ := blake2b.New512(nil)
+	_, copyErr := cancelio.Copy(ctx, h, f)
+	err = errors.Join(copyErr, f.Close())
+	if err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// prefixCapture bounds metadata memory even when a damaged sidecar is huge.
+type prefixCapture struct{ data []byte }
+
+func (p *prefixCapture) Write(data []byte) (int, error) {
+	n := len(data)
+	remaining := 129 - len(p.data)
+	if remaining > 0 {
+		if len(data) > remaining {
+			data = data[:remaining]
+		}
+		p.data = append(p.data, data...)
+	}
+	return n, nil
+}
+func readSidecar(ctx context.Context, root *rootfs.Root, path string) (*Sidecar, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f, err := openRegular(root, path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	h, _ := blake2b.New512(nil)
+	prefix := &prefixCapture{}
+	_, copyErr := cancelio.Copy(ctx, io.MultiWriter(h, prefix), f)
+	err = errors.Join(copyErr, f.Close())
+	if err != nil {
+		return nil, err
+	}
+	result := &Sidecar{Hash: hex.EncodeToString(h.Sum(nil))}
+	if value := string(prefix.data); validChecksum(value) {
+		result.Value = value
+	}
+	return result, nil
+}
+
+// Scan is read-only, including when metadata is missing or malformed. It does
+// not generate a checksum sidecar, chmod data, or admit quarantine/temporary files.
+func Scan(ctx context.Context, paths []string) (map[string][]Copy, error) {
+	return scan(ctx, paths, nil)
+}
+
+// Keep one sequential reader per disk, while scanning independent disks in
+// parallel. On any error all readers are cancelled and joined before returning.
+func scan(ctx context.Context, paths []string, progress func(string, string)) (map[string][]Copy, error) {
+	paths = canonicalStrings(paths)
+	if err := validateCanonicalRoots(paths); err != nil {
+		return nil, err
+	}
+	rs, err := openRoots(paths)
+	if err != nil {
+		return nil, err
+	}
+	defer rs.close()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	results := make([]map[string]Copy, len(paths))
+	failures := make([]error, len(paths))
+	var workers sync.WaitGroup
+	var progressLock sync.Mutex
+	report := func(root, path string) {
+		if progress != nil {
+			progressLock.Lock()
+			defer progressLock.Unlock()
+			progress(root, path)
+		}
+	}
+	for i, path := range paths {
+		workers.Add(1)
+		go func(i int, root *rootfs.Root) {
+			defer workers.Done()
+			results[i], failures[i] = scanRoot(ctx, root, report)
+			if failures[i] != nil {
+				cancel()
+			}
+		}(i, rs[path])
+	}
+	workers.Wait()
+	if err := errors.Join(failures...); err != nil {
+		return nil, err
+	}
+	observations := make(map[string][]Copy)
+	for _, result := range results {
+		for path, copy := range result {
+			observations[path] = append(observations[path], copy)
+		}
+	}
+	return observations, ctx.Err()
+}
+func scanRoot(ctx context.Context, root *rootfs.Root, progress func(string, string)) (map[string]Copy, error) {
+	observations := make(map[string]Copy)
+	var walk func(string) error
+	walk = func(dir string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		entries, err := root.ReadDir(dir)
+		if err != nil {
+			return err
+		}
+		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			rel := filepath.Join(dir, entry.Name())
+			if rel == rootfs.Internal || rel == "lost+found" {
+				continue
+			}
+			if err := validateRelativePath(rel); err != nil {
+				return err
+			}
+			switch {
+			case entry.IsDir():
+				if err := walk(rel); err != nil {
+					return err
+				}
+			case entry.Type()&os.ModeSymlink != 0:
+				continue
+			case entry.Type().IsRegular():
+				if strings.HasSuffix(rel, checksumSuffix) {
+					continue
+				}
+				actual, err := checksumFile(ctx, root, rel)
+				if err != nil {
+					return err
+				}
+				sidecar, err := readSidecar(ctx, root, rel+checksumSuffix)
+				if err != nil {
+					return err
+				}
+				observations[rel] = Copy{Root: root.Path(), ActualChecksum: actual, Sidecar: sidecar}
+				if progress != nil {
+					progress(root.Path(), rel)
+				}
+			default:
+				return fmt.Errorf("unsupported entry: %s", filepath.Join(root.Path(), rel))
+			}
+		}
+		return nil
+	}
+	if err := walk("."); err != nil {
+		return nil, err
+	}
+	return observations, ctx.Err()
+}
+
+func ValidateCurrentState(ctx context.Context, log Log, currentRoots []string) error {
+	rs, err := prepare(log, currentRoots)
+	if err != nil {
+		return err
+	}
+	defer rs.close()
+	return validateFiles(ctx, log, rs, false)
+}
+func prepare(log Log, currentRoots []string) (roots, error) {
+	if err := validateLog(log); err != nil {
+		return nil, err
+	}
+	if err := RequirePending(log); err != nil {
+		return nil, err
+	}
+	if !equalStrings(log.Roots, canonicalStrings(currentRoots)) {
+		return nil, fmt.Errorf("mounted roots changed since the logged scan: logged %v, current %v", log.Roots, currentRoots)
+	}
+	return openRoots(log.Roots)
+}
+func validateFiles(ctx context.Context, log Log, rs roots, complete bool) error {
+	for _, repair := range log.Repairs {
+		hasSource := false
+		for _, copy := range repair.Copies {
+			root := rs[copy.Root]
+			actual, err := checksumFile(ctx, root, repair.RelPath)
+			if err != nil {
+				return err
+			}
+			if actual != repair.Checksum && (complete || actual != copy.ActualChecksum) {
+				return fmt.Errorf("file changed since the logged scan or is not repaired: %s", filepath.Join(copy.Root, repair.RelPath))
+			}
+			sidecar, err := readSidecar(ctx, root, repair.RelPath+checksumSuffix)
+			if err != nil {
+				return err
+			}
+			desired := sidecar != nil && sidecar.Value == repair.Checksum
+			if !desired && (complete || !equalSidecars(sidecar, copy.Sidecar)) {
+				return fmt.Errorf("checksum sidecar changed since the logged scan or is not repaired: %s", filepath.Join(copy.Root, repair.RelPath+checksumSuffix))
+			}
+			if actual == repair.Checksum {
+				hasSource = true
+			}
+		}
+		if !hasSource {
+			return fmt.Errorf("no verified source remains for %s", repair.RelPath)
+		}
+	}
+	return ctx.Err()
+}
+
+// Apply requires prior operator confirmation. It confines all I/O to opened
+// mirror roots, validates the entire plan before any mutation, and rechecks
+// destinations after populating verified replacements. Only desired bytes pass
+// final completion verification; original scanned bytes are resume-only states.
+func Apply(ctx context.Context, log Log, currentRoots []string, preview bool, writer io.Writer) error {
+	if writer == nil {
+		return errors.New("repair output is required")
+	}
+	rs, err := prepare(log, currentRoots)
+	if err != nil {
+		return err
+	}
+	defer rs.close()
+	if err := validateFiles(ctx, log, rs, false); err != nil {
+		return err
+	}
+	for _, repair := range log.Repairs {
+		var source *rootfs.Root
+		for _, copy := range repair.Copies {
+			actual, err := checksumFile(ctx, rs[copy.Root], repair.RelPath)
+			if err != nil {
+				return err
+			}
+			if actual == repair.Checksum {
+				source = rs[copy.Root]
+				break
+			}
+		}
+		if source == nil {
+			return fmt.Errorf("no verified source remains for %s", repair.RelPath)
+		}
+		for _, copy := range repair.Copies {
+			root := rs[copy.Root]
+			actual, err := checksumFile(ctx, root, repair.RelPath)
+			if err != nil {
+				return err
+			}
+			if actual != repair.Checksum {
+				if actual != copy.ActualChecksum {
+					return fmt.Errorf("destination changed immediately before repair: %s", repair.RelPath)
+				}
+				if preview {
+					fmt.Fprintln(writer, "preview: repaired file:", filepath.Join(copy.Root, repair.RelPath))
+				} else {
+					backup, err := replace(ctx, root, repair.RelPath, actual, repair.Checksum, func(f *os.File) error {
+						src, err := openRegular(source, repair.RelPath)
+						if err != nil {
+							return err
+						}
+						_, copyErr := cancelio.Copy(ctx, f, src)
+						return errors.Join(copyErr, src.Close())
+					})
+					if err != nil {
+						return fmt.Errorf("repair file %s: %w", repair.RelPath, err)
+					}
+					fmt.Fprintln(writer, "preserved corrupt file:", backup)
+					fmt.Fprintln(writer, "repaired file:", filepath.Join(copy.Root, repair.RelPath))
+				}
+			}
+			sidecarPath := repair.RelPath + checksumSuffix
+			sidecar, err := readSidecar(ctx, root, sidecarPath)
+			if err != nil {
+				return err
+			}
+			if sidecar == nil || sidecar.Value != repair.Checksum {
+				if !equalSidecars(sidecar, copy.Sidecar) {
+					return fmt.Errorf("sidecar changed immediately before repair: %s", sidecarPath)
+				}
+				if preview {
+					fmt.Fprintln(writer, "preview: repaired checksumfile:", filepath.Join(copy.Root, sidecarPath))
+				} else {
+					oldHash := ""
+					if sidecar != nil {
+						oldHash = sidecar.Hash
+					}
+					backup, err := replace(ctx, root, sidecarPath, oldHash, checksumBytes([]byte(repair.Checksum)), func(f *os.File) error { _, err := io.WriteString(f, repair.Checksum); return err })
+					if err != nil {
+						return fmt.Errorf("repair sidecar %s: %w", sidecarPath, err)
+					}
+					if backup != "" {
+						fmt.Fprintln(writer, "preserved corrupt checksumfile:", backup)
+					}
+					fmt.Fprintln(writer, "repaired checksumfile:", filepath.Join(copy.Root, sidecarPath))
+				}
+			}
+		}
+	}
+	if !preview {
+		if err := validateFiles(ctx, log, rs, true); err != nil {
+			return fmt.Errorf("validate completed repairs: %w", err)
+		}
+	}
+	return ctx.Err()
+}
+func replace(ctx context.Context, root *rootfs.Root, destination, oldHash, expected string, populate func(*os.File) error) (backup string, returnErr error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := root.EnsureInternal(); err != nil {
+		return "", err
+	}
+	temporary, tempPath, err := root.CreateTemp(rootfs.Internal+"/tmp", "repair-")
+	if err != nil {
+		return "", err
+	}
+	defer func() {
+		if err := root.Remove(tempPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+			returnErr = errors.Join(returnErr, err)
+		}
+	}()
+	populateErr := populate(temporary)
+	err = errors.Join(populateErr, temporary.Chmod(0444), temporary.Sync(), temporary.Close())
+	if err != nil {
+		return "", err
+	}
+	actual, err := checksumFile(ctx, root, tempPath)
+	if err != nil {
+		return "", err
+	}
+	if actual != expected {
+		return "", fmt.Errorf("temporary replacement checksum is %s, expected %s", actual, expected)
+	}
+	current, err := checksumFile(ctx, root, destination)
+	if oldHash == "" {
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", fmt.Errorf("expected absent destination %s: %w", destination, errors.Join(err, errors.New("destination changed")))
+		}
+	} else {
+		if err != nil {
+			return "", err
+		}
+		if current != oldHash {
+			return "", fmt.Errorf("destination changed while preparing replacement: %s", destination)
+		}
+		record, err := root.MkdirTemp(rootfs.Internal + "/quarantine")
+		if err != nil {
+			return "", err
+		}
+		backup = filepath.Join(record, destination)
+		if err := root.MkdirAll(filepath.Dir(backup), 0700); err != nil {
+			return "", err
+		}
+		if err := root.Link(destination, backup); err != nil {
+			return "", err
+		}
+		saved, err := checksumFile(ctx, root, backup)
+		if err != nil {
+			return "", err
+		}
+		if saved != oldHash {
+			return "", fmt.Errorf("destination changed during quarantine: %s", destination)
+		}
+		if err := root.SyncDir(filepath.Dir(backup)); err != nil {
+			return "", err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	if err := root.Rename(tempPath, destination, oldHash == ""); err != nil {
+		return "", err
+	}
+	if err := errors.Join(root.SyncDir(filepath.Dir(destination)), root.SyncDir(rootfs.Internal+"/tmp")); err != nil {
+		return "", err
+	}
+	if backup != "" {
+		backup = filepath.Join(root.Path(), backup)
+	}
+	return backup, nil
+}
+
+// PublishMissing is the ensure-copies publication path: no existing data or
+// metadata may be replaced, and the copied bytes must match the planned hash.
+func PublishMissing(ctx context.Context, source, destination, path, checksum string) error {
+	if err := validateRelativePath(path); err != nil {
+		return err
+	}
+	src, err := rootfs.Open(source)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	dst, err := rootfs.Open(destination)
+	if err != nil {
+		return err
+	}
+	defer dst.Close()
+	for _, rel := range []string{path, path + checksumSuffix} {
+		if _, err := dst.Stat(rel); !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("destination must be absent: %s", filepath.Join(destination, rel))
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := dst.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return err
+	}
+	_, err = replace(ctx, dst, path, "", checksum, func(file *os.File) error {
+		input, err := openRegular(src, path)
+		if err != nil {
+			return err
+		}
+		_, copyErr := cancelio.Copy(ctx, file, input)
+		return errors.Join(copyErr, input.Close())
+	})
+	if err != nil {
+		return err
+	}
+	return PublishMissingSidecar(ctx, destination, path, checksum)
+}
+func PublishMissingSidecar(ctx context.Context, rootPath, path, checksum string) error {
+	if err := validateRelativePath(path); err != nil {
+		return err
+	}
+	if !validChecksum(checksum) {
+		return errors.New("invalid checksum")
+	}
+	root, err := rootfs.Open(rootPath)
+	if err != nil {
+		return err
+	}
+	defer root.Close()
+	actual, err := checksumFile(ctx, root, path)
+	if err != nil {
+		return err
+	}
+	if actual != checksum {
+		return fmt.Errorf("file changed before metadata publication: %s", path)
+	}
+	_, err = replace(ctx, root, path+checksumSuffix, "", checksumBytes([]byte(checksum)), func(file *os.File) error { _, err := io.WriteString(file, checksum); return err })
+	return err
+}

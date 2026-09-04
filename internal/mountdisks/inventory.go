@@ -91,29 +91,35 @@ func loadConfig(path string) ([]string, error) {
 	return identifiers, nil
 }
 
-func MountedRoots(ctx context.Context, system System, configPath, homeDir, mapperDir string) ([]string, []string, error) {
+type Snapshot struct {
+	Roots             []string
+	Missing           []string
+	ConfiguredMirrors int
+}
+
+func MountedRoots(ctx context.Context, system System, configPath, homeDir, mapperDir string) (Snapshot, error) {
 	if system == nil {
-		return nil, nil, errors.New("system is required")
+		return Snapshot{}, errors.New("system is required")
 	}
 	if configPath == "" || !filepath.IsAbs(configPath) || filepath.Clean(configPath) != configPath {
-		return nil, nil, errors.New("config path must be a clean absolute path")
+		return Snapshot{}, errors.New("config path must be a clean absolute path")
 	}
 	if homeDir == "" || !filepath.IsAbs(homeDir) || filepath.Clean(homeDir) != homeDir {
-		return nil, nil, errors.New("home directory must be a clean absolute path")
+		return Snapshot{}, errors.New("home directory must be a clean absolute path")
 	}
 	if mapperDir == "" {
 		mapperDir = "/dev/mapper"
 	}
 	if !filepath.IsAbs(mapperDir) || filepath.Clean(mapperDir) != mapperDir {
-		return nil, nil, errors.New("mapper directory must be a clean absolute path")
+		return Snapshot{}, errors.New("mapper directory must be a clean absolute path")
 	}
 	identifiers, err := loadConfig(configPath)
 	if err != nil {
-		return nil, nil, err
+		return Snapshot{}, err
 	}
 	plans, missing, err := inspectPlans(ctx, system, identifiers, homeDir, mapperDir)
 	if err != nil {
-		return nil, nil, err
+		return Snapshot{}, err
 	}
 	var roots []string
 	for _, plan := range plans {
@@ -122,7 +128,7 @@ func MountedRoots(ctx context.Context, system System, configPath, homeDir, mappe
 		}
 	}
 	sort.Strings(roots)
-	return roots, missing, nil
+	return Snapshot{Roots: roots, Missing: missing, ConfiguredMirrors: len(identifiers)}, nil
 }
 
 func inspectPlans(ctx context.Context, system System, identifiers []string, homeDir, mapperDir string) ([]diskPlan, []string, error) {

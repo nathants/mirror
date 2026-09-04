@@ -53,10 +53,10 @@ type handlers struct {
 	format       func(context.Context, callerIdentity) error
 	mount        func(context.Context, callerIdentity) error
 	unmount      func(context.Context, callerIdentity) error
-	ensureCopies func(bool) error
-	repairCopies func(bool, bool) error
-	lock         func() error
-	unlock       func() error
+	ensureCopies func(context.Context, bool) error
+	repairCopies func(context.Context, bool, bool) error
+	lock         func(context.Context) error
+	unlock       func(context.Context) error
 }
 
 var errDeclined = errors.New("operation declined")
@@ -146,25 +146,25 @@ func execute(
 		if handlers.ensureCopies == nil {
 			runErr = errors.New("ensure-copies handler is unavailable")
 		} else {
-			runErr = handlers.ensureCopies(command.EnsureCopies.Preview)
+			runErr = handlers.ensureCopies(ctx, command.EnsureCopies.Preview)
 		}
 	case command.RepairCopies != nil:
 		if handlers.repairCopies == nil {
 			runErr = errors.New("repair-copies handler is unavailable")
 		} else {
-			runErr = handlers.repairCopies(command.RepairCopies.Preview, command.RepairCopies.Resume)
+			runErr = handlers.repairCopies(ctx, command.RepairCopies.Preview, command.RepairCopies.Resume)
 		}
 	case command.Lock != nil:
 		if handlers.lock == nil {
 			runErr = errors.New("lock handler is unavailable")
 		} else {
-			runErr = handlers.lock()
+			runErr = handlers.lock(ctx)
 		}
 	case command.Unlock != nil:
 		if handlers.unlock == nil {
 			runErr = errors.New("unlock handler is unavailable")
 		} else {
-			runErr = handlers.unlock()
+			runErr = handlers.unlock(ctx)
 		}
 	default:
 		runErr = errors.New("no command selected")

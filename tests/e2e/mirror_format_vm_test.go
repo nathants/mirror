@@ -90,6 +90,7 @@ func TestMirrorFormatVM(t *testing.T) {
 		t.Fatalf("formatter did not report success:\n%s", output)
 	}
 	run(t, repo, nil, nil, "vm", "ssh", "--cmd", "sudo -n -- /tmp/vmcheck postcheck "+target, name)
+	run(t, repo, nil, nil, "vm", "ssh", "--cmd", "/tmp/vmcheck write-probe "+target, name)
 	run(t, repo, nil, nil, "vm", "ssh", "--cmd", "sudo -n -- /tmp/vmcheck configure "+target, name)
 	output = runInteractive(t, repo, "vm", []interaction{
 		{prompt: "type \"unmount\" to confirm:", response: "unmount"},
@@ -110,6 +111,7 @@ func TestMirrorFormatVM(t *testing.T) {
 		t.Fatalf("mount did not report success:\n%s", output)
 	}
 	run(t, repo, nil, nil, "vm", "ssh", "--cmd", "sudo -n -- /tmp/vmcheck postcheck "+target, name)
+	run(t, repo, nil, nil, "vm", "ssh", "--cmd", "/tmp/vmcheck verify-probe "+target, name)
 	output = runInteractive(t, repo, "vm", []interaction{
 		{prompt: "type \"unmount\" to confirm:", response: "unmount"},
 	}, "ssh", "--tty", "--cmd", "sudo -n -- /tmp/mirror unmount", name)

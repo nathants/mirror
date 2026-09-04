@@ -4,9 +4,13 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/user"
+	"strconv"
 	"strings"
 	"testing"
+
+	"mirror/internal/operationlock"
 )
 
 func noOpHandlers() handlers {
@@ -14,10 +18,10 @@ func noOpHandlers() handlers {
 		format:       func(context.Context, callerIdentity) error { return nil },
 		mount:        func(context.Context, callerIdentity) error { return nil },
 		unmount:      func(context.Context, callerIdentity) error { return nil },
-		ensureCopies: func(bool) error { return nil },
-		repairCopies: func(bool, bool) error { return nil },
-		lock:         func() error { return nil },
-		unlock:       func() error { return nil },
+		ensureCopies: func(context.Context, bool) error { return nil },
+		repairCopies: func(context.Context, bool, bool) error { return nil },
+		lock:         func(context.Context) error { return nil },
+		unlock:       func(context.Context) error { return nil },
 	}
 }
 
@@ -64,7 +68,7 @@ func TestEverySubcommandHasContextualHelp(t *testing.T) {
 					return nil
 				}
 			case "ensure-copies":
-				handlers.ensureCopies = func(bool) error {
+				handlers.ensureCopies = func(context.Context, bool) error {
 					called = true
 					return nil
 				}
@@ -215,7 +219,7 @@ func TestPrivilegedSubcommandsRejectUnverifiableSudoIdentity(t *testing.T) {
 func TestCopyFlagsDispatchThroughUnifiedCLI(t *testing.T) {
 	handlers := noOpHandlers()
 	ensurePreview := false
-	handlers.ensureCopies = func(preview bool) error {
+	handlers.ensureCopies = func(_ context.Context, preview bool) error {
 		ensurePreview = preview
 		return nil
 	}
@@ -229,7 +233,7 @@ func TestCopyFlagsDispatchThroughUnifiedCLI(t *testing.T) {
 
 	repairPreview := false
 	repairResume := false
-	handlers.repairCopies = func(preview, resume bool) error {
+	handlers.repairCopies = func(_ context.Context, preview, resume bool) error {
 		repairPreview = preview
 		repairResume = resume
 		return nil
@@ -240,5 +244,26 @@ func TestCopyFlagsDispatchThroughUnifiedCLI(t *testing.T) {
 	}
 	if !repairPreview || !repairResume {
 		t.Fatalf("repair flags = preview %v, resume %v", repairPreview, repairResume)
+	}
+}
+
+func TestPrivilegedHandlersUseTheSameCallerLock(t *testing.T) {
+	home := t.TempDir()
+	lock, err := operationlock.Acquire(context.Background(), home, os.Getuid(), os.Getgid())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	// No OS program can be found if a handler accidentally bypasses the lock.
+	t.Setenv("PATH", t.TempDir())
+	account := &user.User{Uid: strconv.Itoa(os.Getuid()), Gid: strconv.Itoa(os.Getgid()), Username: "test", HomeDir: home}
+	platform := fakePlatform(0, map[string]string{"SUDO_UID": account.Uid, "SUDO_GID": account.Gid, "SUDO_USER": "test"}, account)
+	for _, command := range []string{"format", "mount", "unmount"} {
+		var output bytes.Buffer
+		h := productionHandlers(strings.NewReader(""), &output, &output)
+		code, _, stderr := runCLI([]string{command}, platform, h)
+		if code != 1 || !strings.Contains(stderr, "another mirror operation") {
+			t.Fatalf("%s bypassed shared lock: %d %s", command, code, stderr)
+		}
 	}
 }

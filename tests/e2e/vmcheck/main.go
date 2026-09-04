@@ -29,7 +29,7 @@ func main() {
 		return
 	}
 	if len(os.Args) != 3 || !targetPattern.MatchString(os.Args[2]) {
-		fail("usage: vmcheck target | vmcheck preflight|postcheck|configure|postunmount|cleanup /dev/sdX")
+		fail("usage: vmcheck target | vmcheck preflight|postcheck|write-probe|verify-probe|configure|postunmount|cleanup /dev/sdX")
 	}
 	targetDisk := os.Args[2]
 	var err error
@@ -38,6 +38,16 @@ func main() {
 		err = preflight(targetDisk)
 	case "postcheck":
 		err = postcheck(targetDisk)
+	case "write-probe", "verify-probe":
+		if os.Geteuid() == 0 {
+			fail("data probe must run as the unprivileged caller")
+		}
+		path := filepath.Join("/home/arch", "mnt."+filepath.Base(targetDisk), "probe")
+		if os.Args[1] == "write-probe" {
+			err = writeProbe(path)
+		} else {
+			err = checkProbe(path)
+		}
 	case "configure":
 		err = configure(targetDisk)
 	case "postunmount":
@@ -182,8 +192,11 @@ func postcheck(targetDisk string) error {
 		return fmt.Errorf("ext4 reserved block count = %q, want 0", reservedBlocks)
 	}
 
-	probePath := mountpoint + "/probe"
-	file, err := os.OpenFile(probePath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+	return checkOwnership(mountpoint)
+}
+
+func writeProbe(probePath string) error {
+	file, err := os.OpenFile(probePath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
 	}
@@ -198,6 +211,14 @@ func postcheck(targetDisk string) error {
 	if err := file.Close(); err != nil {
 		return err
 	}
+	dir, err := os.Open(filepath.Dir(probePath))
+	if err != nil {
+		return err
+	}
+	return errors.Join(dir.Sync(), dir.Close())
+}
+
+func checkProbe(probePath string) error {
 	data, err := os.ReadFile(probePath)
 	if err != nil {
 		return err
@@ -205,7 +226,6 @@ func postcheck(targetDisk string) error {
 	if !bytes.Equal(data, []byte("e2e-payload\n")) {
 		return fmt.Errorf("probe bytes = %q", data)
 	}
-	syscall.Sync()
 	fmt.Println("__E2E_PASS__")
 	return nil
 }
@@ -318,4 +338,31 @@ func run(name string, args ...string) error {
 func fail(message string) {
 	fmt.Printf("__VM_CHECK_FAIL__ %s\n", strconv.Quote(message))
 	os.Exit(1)
+}
+
+func checkOwnership(path string) error {
+	account, err := user.Lookup("arch")
+	if err != nil {
+		return err
+	}
+	uid, err := strconv.Atoi(account.Uid)
+	if err != nil {
+		return err
+	}
+	gid, err := strconv.Atoi(account.Gid)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok {
+		return errors.New("no filesystem ownership information")
+	}
+	if int(stat.Uid) != uid || int(stat.Gid) != gid {
+		return fmt.Errorf("mount ownership is %d:%d, want %d:%d", stat.Uid, stat.Gid, uid, gid)
+	}
+	return nil
 }

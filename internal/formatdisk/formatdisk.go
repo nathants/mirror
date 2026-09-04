@@ -15,6 +15,8 @@ import (
 	"strings"
 	"text/tabwriter"
 	"time"
+
+	"mirror/internal/terminal"
 )
 
 const lsblkColumns = "PATH,KNAME,PKNAME,MAJ:MIN,SIZE,TYPE,FSTYPE,UUID,PARTUUID,MOUNTPOINTS,MODEL,SERIAL,WWN,RO"
@@ -136,7 +138,7 @@ func (a *app) run(ctx context.Context) (returnErr error) {
 	fmt.Fprintln(a.out, "detected whole disks:")
 	writeDiskTable(a.out, disks)
 	fmt.Fprint(a.out, "\nwhich whole disk do you want to reformat (and completely erase)? ")
-	device, err := a.readLine()
+	device, err := terminal.ReadLine(ctx, a.input)
 	if err != nil {
 		return fmt.Errorf("read device selection: %w", err)
 	}
@@ -161,7 +163,7 @@ func (a *app) run(ctx context.Context) (returnErr error) {
 	fmt.Fprintf(a.out, "mountpoint: %s\n", mountpoint)
 	fmt.Fprintf(a.out, "\nWARNING: all data on %s will be permanently erased.\n", device)
 	fmt.Fprintf(a.out, "Type the exact device path (%s) to confirm: ", device)
-	confirmation, err := a.readLine()
+	confirmation, err := terminal.ReadLine(ctx, a.input)
 	if err != nil {
 		return fmt.Errorf("read confirmation: %w", err)
 	}
@@ -249,7 +251,7 @@ func (a *app) run(ctx context.Context) (returnErr error) {
 		}
 		fmt.Fprintf(a.errOut, "opening LUKS container failed: %v\n", err)
 		fmt.Fprint(a.out, "retry opening it? y/N: ")
-		answer, readErr := a.readLine()
+		answer, readErr := terminal.ReadLine(ctx, a.input)
 		if readErr != nil {
 			return fmt.Errorf("read open retry response: %w", readErr)
 		}
@@ -610,29 +612,6 @@ func (a *app) rootTypeAllowed(deviceType string) bool {
 		return deviceType == "disk" || deviceType == "loop"
 	}
 	return deviceType == "disk"
-}
-
-func (a *app) readLine() (string, error) {
-	var line []byte
-	var one [1]byte
-	for {
-		count, err := a.input.Read(one[:])
-		if count == 1 {
-			if one[0] == '\n' {
-				return strings.TrimSuffix(string(line), "\r"), nil
-			}
-			line = append(line, one[0])
-		}
-		if err != nil {
-			if errors.Is(err, io.EOF) && len(line) > 0 {
-				return strings.TrimSuffix(string(line), "\r"), nil
-			}
-			return "", err
-		}
-		if count == 0 {
-			return "", io.ErrNoProgress
-		}
-	}
 }
 
 func writeDiskTable(writer io.Writer, devices []blockDevice) {

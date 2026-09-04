@@ -54,9 +54,11 @@ sudo "$(command -v mirror)" format
 
 The binary validates sudo's caller identity against the system account database and continues to use the invoking user's home directory, UID, and GID. Direct root invocation without sudo caller metadata is rejected. Help never requires privilege, so `mirror unmount -h` works directly.
 
-`mirror ensure-copies` scans each mounted mirror disk, then checksums and copies files as needed.
+`mirror ensure-copies` explicitly ingests missing checksum metadata and fills missing copies. It verifies that existing data agrees before publication and refuses disagreements for repair. Preview does not change mirror files or modes; publication uses verified temporary files and never replaces an unexpected destination.
 
-`mirror repair-copies` scans each mounted mirror disk, persists the repair plan, and repairs mismatches only when the data and sidecar checksums establish a strict majority with a matching source copy. Use `--resume` to load the last pending plan without repeating the full scan.
+`mirror repair-copies` scans without changing data, modes, or checksum files, then persists a repair plan. A file's adjacent `.b2sum` file is its checksum **sidecar**. Each configured mirror supports each distinct checksum supplied by its current data or valid sidecar at most once: agreement does not double its vote. Exactly one candidate must be supported by more than half of **all configured mirrors**, including absent/unmounted mirrors in the denominator. Multiple qualifying candidates are refused, even if their support counts differ. A data copy must actually match the winner before repair can proceed. Missing and malformed sidecars supply no checksum evidence; they can be reconstructed from consensus, and malformed bytes are preserved. No checksum is invented during scanning.
+
+Use `mirror repair-copies --resume` to load the last pending plan without repeating the full scan. Repair does not reconcile symlink targets or fill missing data copies; use ensure-copies for missing copies after resolving disagreements.
 
 `mirror lock` makes mirror directories read-only; `mirror unlock` makes them writable for deliberate changes.
 
@@ -64,7 +66,11 @@ The binary validates sudo's caller identity against the system account database 
 
 `~/.mirror/disks` contains one GPT disk identifier (the whole-disk `PTUUID`) per line. Blank lines and lines beginning with `#` are ignored. `mirror mount` resolves these stable identifiers to current `/dev/sdX` names and rejects ambiguous or unexpected layouts.
 
-The most recent repair run is stored atomically in `~/.mirror/repair-last.json`. A completed scan with unresolved repairs remains `pending`, including when the prompt is declined or the process is interrupted. `mirror repair-copies --resume` displays that plan immediately, asks for confirmation, then rechecks the configured mounts and hashes only the listed files before changing anything. A completed repair marks the log `completed`; a clean scan marks it `clean`.
+The most recent repair run is stored atomically in `~/.mirror/repair-last.json`. A completed scan with unresolved repairs remains `pending`, including when the prompt is declined or an apply is interrupted. Resume keeps mount paths as its identity keys, rechecks the configured mirror count and mounted roots, and hashes only the listed files and metadata. Completion requires every planned data copy and sidecar to contain the desired checksum, not merely its original scanned state. Log format v2 is a hard cutover: old logs require a fresh scan. Starting a new scan replaces the previous log.
+
+All commands that operate on disks, including previews, acquire the same non-waiting exclusive lock at `~/.mirror/operation.lock`. A second command fails immediately. Do not remove or replace this file; the kernel releases the lock on process exit. Help requires no lock. Preview may write this runtime lock and a repair scan log, but does not change mirror files or permissions.
+
+SIGINT/SIGTERM cancel inventory, prompts, and work between bounded reads/writes. Cleanup uses an independent timeout and releases the operation lock. Kernel-blocked disk I/O may still delay exit. The lock coordinates mirror commands only: keep other programs and manual writers off these disks during operations. Directory modes are an accidental-write guard, not protection against their owner.
 
 ## Notes
 
@@ -72,9 +78,9 @@ Only files, directories, and symlinks are supported.
 
 Only immutable data should go in the mirror. Make copies instead of mutations. Mutations will trigger repair.
 
-When repairing, corrupt bytes are retained under a `.corrupted.N` name before an atomically published replacement takes the original path. They can be inspected later.
+Each disk reserves a private, marked `.mirror-internal/` directory. Verified replacements are staged in `tmp/`; corrupt data and sidecars are retained on the affected disk under `quarantine/<unique-record>/<original-relative-path>`. Neither subtree is scanned or replicated, and evidence is not automatically deleted. Existing unmarked content at this reserved path is rejected rather than adopted. Crash-left temporary files remain distinguishable from user data. Inspect them manually; do not move them into normal data without deciding what they represent. Older `.corrupted.N` files are not automatically migrated or inferred to be evidence; move any such known backups out of the mirrored object namespace before running ensure-copies.
 
-Linux only.
+Linux only; descriptor-rooted access requires kernel `openat2` support (Linux 5.6+). Repair and copy operations reject symlink traversal and nested mounts rather than falling back to path-based access.
 
 ## Testing
 
@@ -86,7 +92,7 @@ go run ./bin/check.go
 
 The check automation is a standard-library Go program. It runs formatting checks, unit tests, race tests, vet, staticcheck, module checks, and thin-wrapper syntax checks.
 
-The opt-in end-to-end test uses the `vm` project and its `mirror-e2e` image. It boots an ephemeral VM with a blank, instance-only 1 GB secondary disk and launches the production `mirror format`, `mirror mount`, and `mirror unmount` commands through guest sudo using the real `fdisk`, `cryptsetup`, `mkfs.ext4`, `mount`, and `umount`. A guest-side checker verifies GPT, LUKS2, ext4 with zero reserved blocks, a data round trip, and final closed/unmounted state. The VM receives no host block device, and `vm bake` never includes secondary disks in images.
+The opt-in end-to-end test uses the `vm` project and its `mirror-e2e` image. It boots an ephemeral VM with a blank, instance-only 1 GB secondary disk and launches the production `mirror format`, `mirror mount`, and `mirror unmount` commands through guest sudo using the real `fdisk`, `cryptsetup`, `mkfs.ext4`, `mount`, and `umount`. A guest-side checker verifies GPT, LUKS2, ext4 with zero reserved blocks, and caller UID/GID ownership. The unprivileged caller writes and syncs a payload once, then reads that same payload without recreating or truncating it after unmount/remount. The test finishes closed and unmounted. The VM receives no host block device, and `vm bake` never includes secondary disks in images.
 
 Build the usage-specific image from a fresh `sid` base after changing its recipe:
 

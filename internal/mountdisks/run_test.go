@@ -439,15 +439,15 @@ func TestMountedRootsReturnsOnlyConfiguredMountedDisks(t *testing.T) {
 	system.mounted = true
 	missingID := "a74a2821-168e-4475-87a9-ab6f2e4e9714"
 	configPath := writeConfig(t, system.identifier, missingID)
-	roots, missing, err := MountedRoots(context.Background(), system, configPath, "/home/test", "/dev/mapper")
+	state, err := MountedRoots(context.Background(), system, configPath, "/home/test", "/dev/mapper")
 	if err != nil {
 		t.Fatalf("discover mounted roots: %v", err)
 	}
-	if want := []string{system.mountpoint}; !reflect.DeepEqual(roots, want) {
-		t.Fatalf("roots = %#v, want %#v", roots, want)
+	if want := []string{system.mountpoint}; !reflect.DeepEqual(state.Roots, want) {
+		t.Fatalf("roots = %#v, want %#v", state.Roots, want)
 	}
-	if want := []string{missingID}; !reflect.DeepEqual(missing, want) {
-		t.Fatalf("missing = %#v, want %#v", missing, want)
+	if want := []string{missingID}; !reflect.DeepEqual(state.Missing, want) {
+		t.Fatalf("missing = %#v, want %#v", state.Missing, want)
 	}
 }
 
