@@ -152,10 +152,18 @@ func plan(ctx context.Context, paths []string) ([]action, error) {
 			if err != nil {
 				return nil, err
 			}
-			_, err = root.Stat(path)
-			root.Close()
-			if !errors.Is(err, os.ErrNotExist) {
-				return nil, fmt.Errorf("unexpected destination entry %s: %w", filepath.Join(destination, path), errors.Join(err, errors.New("not absent")))
+			if target == nil {
+				err = repaircopies.CheckMissingDestination(ctx, root, path)
+			} else {
+				_, err = root.Stat(path)
+				if errors.Is(err, os.ErrNotExist) {
+					err = nil
+				} else {
+					err = fmt.Errorf("unexpected destination entry %s: %w", filepath.Join(destination, path), errors.Join(err, errors.New("not absent")))
+				}
+			}
+			if err := errors.Join(err, root.Close()); err != nil {
+				return nil, err
 			}
 			actions = append(actions, action{source: source, destination: destination, path: path, checksum: checksum, target: target})
 		}

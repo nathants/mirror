@@ -75,7 +75,7 @@ This is distinct from finding 1: one loses genuine checksum evidence; this one s
 
 **Resolution (2026-09-05, Admin-selected policy):** `.b2sum` is reserved for checksum metadata, not regular payload files or symlinks. Publication and repair-log validation reject reserved payload names; scanning rejects sidecars of sidecars, invalid base names, and sidecars attached to non-regular entries. Directory names may still use the suffix. Ensure now refuses checksum-only paths with no regular data source on any mounted mirror, with instructions to restore data or rename an intended payload. Repair still retains legitimate orphan evidence, including malformed bytes without votes, preserving finding 1's fix. The namespace is explicit rather than inferred from contents. New namespace tests first reproduced the defects and now pass, as does the original review probe. Existing sidecar-evidence and ensure tests remain passing. `go run ./bin/check.go` passes, including race tests, vet, staticcheck, and module/wrapper checks. The separate preflight collision policy in finding 5 remains open.
 
-### 5. P2 — Ensure preflight does not check the sidecar destinations it will publish
+### 5. [done] P2 — Ensure preflight does not check the sidecar destinations it will publish
 
 **Location:** `internal/ensurecopies/ensurecopies.go:131-145`; `internal/repaircopies/files.go:449-468`.
 
@@ -86,6 +86,8 @@ A common trigger is deleted data with its correct checksum sidecar still present
 **Evidence:** `TestAuditSidecarCollisionMustFailPreflight` supplied files `a` and `z`, with only `z.b2sum` on the destination. Planning succeeded; apply published `a` before failing on the already-existing `z.b2sum`.
 
 **Recommendation:** Preflight the complete data/sidecar publication pair for every action. Define an explicit recovery policy for an existing matching sidecar; absent such a policy, reject it before any publication or chmod. Preserve no-replace publication checks as the final guard.
+
+**Resolution (2026-09-05):** Ensure planning and regular-file publication now share a context-aware check of both destination paths. Any existing sidecar, including matching checksum evidence, rejects the whole plan before directory unlocking or publication; no sidecar is adopted, overwritten, or deleted. Symlinks reserve only their actual destination because they have no sidecars. New preflight tests first reproduced acceptance of matching, conflicting, malformed, and directory obstructions and now verify early refusal without partial actions or mutations. They replace the earlier ensure consumer test that expected an orphan collision to fail only during apply. Additional tests preserve publication-time rejection of a newly appeared sidecar and avoid false sidecar reservations for symlinks. The original review probe and `go run ./bin/check.go` pass, including race tests, vet, staticcheck, and module/wrapper checks.
 
 ### 6. P2 — Empty directories are never replicated
 

@@ -503,6 +503,24 @@ func replace(ctx context.Context, root *rootfs.Root, destination, oldHash, expec
 	return backup, nil
 }
 
+// CheckMissingDestination checks the complete regular-file publication pair.
+// Planning and publication share this read-only check; even matching sidecars
+// obstruct publication and must be handled manually, never adopted or replaced.
+func CheckMissingDestination(ctx context.Context, root *rootfs.Root, path string) error {
+	if err := validateDataPath(path); err != nil {
+		return err
+	}
+	for _, rel := range []string{path, path + checksumSuffix} {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if _, err := root.Stat(rel); !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("destination must be absent: %s: %w", filepath.Join(root.Path(), rel), errors.Join(err, errors.New("not absent")))
+		}
+	}
+	return nil
+}
+
 // PublishMissing is the ensure-copies publication path: no existing data or
 // metadata may be replaced, and the copied bytes must match the planned hash.
 func PublishMissing(ctx context.Context, source, destination, path, checksum string) error {
@@ -519,10 +537,8 @@ func PublishMissing(ctx context.Context, source, destination, path, checksum str
 		return err
 	}
 	defer dst.Close()
-	for _, rel := range []string{path, path + checksumSuffix} {
-		if _, err := dst.Stat(rel); !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("destination must be absent: %s", filepath.Join(destination, rel))
-		}
+	if err := CheckMissingDestination(ctx, dst, path); err != nil {
+		return err
 	}
 	if err := ctx.Err(); err != nil {
 		return err
