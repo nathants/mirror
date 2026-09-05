@@ -258,7 +258,7 @@ func (a *app) mountPreflight(ctx context.Context) ([]string, []diskPlan, []strin
 // Shared preflight proves identity and topology. Deactivation deliberately does
 // not require writable devices or a mountable decrypted filesystem.
 func (a *app) preflight(ctx context.Context) ([]string, []diskPlan, []string, error) {
-	identifiers, err := loadConfig(a.option.ConfigPath)
+	identifiers, err := loadConfig(ctx, a.option.ConfigPath)
 	if err != nil {
 		return nil, nil, nil, err
 	}

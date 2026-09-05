@@ -70,7 +70,7 @@ Use `mirror repair-copies --resume` to continue the safe portion of the last pen
 
 ## Configuration
 
-`~/.mirror/disks` contains one GPT disk identifier (the whole-disk `PTUUID`) per line. Blank lines and lines beginning with `#` are ignored. `mirror mount` resolves these stable identifiers to current `/dev/sdX` names and rejects ambiguous or unexpected layouts.
+`~/.mirror/disks` contains one GPT disk identifier (the whole-disk `PTUUID`) per line. Blank lines and lines beginning with `#` are ignored. The config must be a regular file, at most 65,536 bytes including comments and whitespace, with no symlinks anywhere in its path. FIFOs, directories, sockets, symlinks, and oversized inputs are rejected before inventory or confirmation. Reads are bounded even if the file grows, and cancellation is checked during reading and parsing. Mount/unmount repeat these checks after confirmation. As with other file I/O, a kernel-blocked operation may still delay cancellation. `mirror mount` resolves these stable identifiers to current `/dev/sdX` names and rejects ambiguous or unexpected layouts.
 
 The most recent repair scan and its progress are stored atomically in `~/.mirror/repair-last.json`. Log format v4 is a hard cutover: older versions may omit unresolved findings or per-file progress and require a fresh scan. Starting a new scan replaces the previous log; preserve a copy first if you need its historical evidence.
 

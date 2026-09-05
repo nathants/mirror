@@ -6,11 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+
+	"golang.org/x/sys/unix"
+	"mirror/internal/cancelio"
 )
 
 const lsblkColumns = "PATH,KNAME,PKNAME,MAJ:MIN,SIZE,TYPE,FSTYPE,PTUUID,UUID,PARTUUID,MOUNTPOINTS,MODEL,SERIAL,WWN,RO"
@@ -63,14 +67,61 @@ type diskPlan struct {
 	MountedSource string
 }
 
-func loadConfig(path string) ([]string, error) {
-	data, err := os.ReadFile(path)
+// A disk-ID list is small metadata, including its comments and whitespace.
+const maxConfigBytes = 64 * 1024
+
+func loadConfig(ctx context.Context, path string) (identifiers []string, returnErr error) {
+	defer func() {
+		if returnErr != nil {
+			identifiers = nil
+			returnErr = fmt.Errorf("read mirror config %s: %w", path, returnErr)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	// NO_SYMLINKS applies to the complete path, not just the final entry.
+	// NONBLOCK prevents a FIFO open from waiting before we can inspect its type.
+	fd, err := unix.Openat2(unix.AT_FDCWD, path, &unix.OpenHow{
+		Flags:   unix.O_RDONLY | unix.O_NONBLOCK | unix.O_NOFOLLOW | unix.O_CLOEXEC,
+		Resolve: unix.RESOLVE_NO_SYMLINKS,
+	})
 	if err != nil {
-		return nil, fmt.Errorf("read mirror config %s: %w", path, err)
+		return nil, err
+	}
+	file := os.NewFile(uintptr(fd), path)
+	defer func() { returnErr = errors.Join(returnErr, ctx.Err(), file.Close()) }()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	info, err := file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("config must be a regular file")
+	}
+	if info.Size() > maxConfigBytes {
+		return nil, fmt.Errorf("config exceeds %d-byte limit", maxConfigBytes)
+	}
+	return readConfig(ctx, path, file)
+}
+
+func readConfig(ctx context.Context, path string, reader io.Reader) ([]string, error) {
+	// Do not trust stat size alone: the file can grow or report a synthetic size.
+	data, err := io.ReadAll(io.LimitReader(cancelio.Reader{Context: ctx, Reader: reader}, maxConfigBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxConfigBytes {
+		return nil, fmt.Errorf("config exceeds %d-byte limit", maxConfigBytes)
 	}
 	seen := make(map[string]struct{})
 	var identifiers []string
 	for lineNumber, line := range strings.Split(string(data), "\n") {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		identifier := strings.TrimSpace(line)
 		if identifier == "" || strings.HasPrefix(identifier, "#") {
 			continue
@@ -113,7 +164,7 @@ func MountedRoots(ctx context.Context, system System, configPath, homeDir, mappe
 	if !filepath.IsAbs(mapperDir) || filepath.Clean(mapperDir) != mapperDir {
 		return Snapshot{}, errors.New("mapper directory must be a clean absolute path")
 	}
-	identifiers, err := loadConfig(configPath)
+	identifiers, err := loadConfig(ctx, configPath)
 	if err != nil {
 		return Snapshot{}, err
 	}

@@ -163,7 +163,7 @@ The preflight inventories disks and mountpoints but never checks availability of
 
 **Resolution (2026-09-05):** Both `Exec` methods and the VM runners now use one Linux process-group lifecycle. Cancellation kills the group; normal parent exit with live helpers also kills them and returns an error. A non-reaping wait pins the leader through group signalling and verification, avoiding PGID-reuse races. Cleanup distinguishes final zombies from zombie leaders with still-running threads, then drains captured pipes with a separate 250-ms wait bound. Foreground terminal handoff and restoration preserve `/dev/tty` password reads and restore terminal modes even after a password reader is killed. Cancellation/lifecycle causes are visible in command errors without losing exit codes or stream semantics. Permanent harmless-subprocess tests first reproduced inherited-pipe delays and live helpers after return; they now verify captured/direct-file output, normal-exit orphans, live threads behind zombie leaders, bounded draining for an explicitly escaped pipe holder, and unchanged argv/stdin/stderr/locale/exit status. Disposable-PTY tests verify password entry without echo plus foreground/mode restoration on success, cancellation, and exec failure. Device-free VM-runner tests verify split/repeated prompts and cancellation before and after interaction. The original review probe and `go run ./bin/check.go` pass, including race tests, vet, staticcheck, and module/wrapper checks. No VM lifecycle or host storage mutation was run. This owns ordinary Linux process groups, not deliberate group/session escapes or native/remote processes; trusted non-daemonizing tools and visible `/proc` are required. Kernel-blocked exits or lost process visibility can retain the operation lock rather than falsely report cleanup. Storage rollback remains disabled.
 
-### 12. P2 — Configuration reads can block outside the cancellation machinery
+### 12. [done] P2 — Configuration reads can block outside the cancellation machinery
 
 **Location:** `internal/mountdisks/inventory.go:66-94,116-121`; `internal/mountdisks/run.go:283-293`.
 
@@ -172,6 +172,8 @@ The preflight inventories disks and mountpoints but never checks availability of
 **Evidence:** `TestAuditConfigInputMustNotBlockOnFIFO` observed the production loader blocked on a disposable FIFO. The test explicitly opened/closed a writer to release it before failing; it left no blocked goroutine.
 
 **Recommendation:** Open configuration nonblocking and without unintended traversal, verify it is a regular file, bound metadata size, and propagate context through reading/parsing. Treat an invalid config type as a preflight error.
+
+**Resolution (2026-09-05):** The shared loader now takes context, opens with Linux `openat2` using nonblocking/no-symlink flags for the complete path, and validates the opened descriptor as a regular file. Configuration is limited to 65,536 bytes, including comments and whitespace: oversized stat metadata fails before reading, and the stream independently reads at most limit-plus-one bytes before rejecting overflow. Reading and line parsing check cancellation, and close/cancellation errors cannot publish partial identifiers. Mounted-root discovery and both mount/unmount preflight passes use this loader. Permanent tests first reproduced the FIFO hang, accepted symlinks/oversized input/cancelled context, and unsafe post-confirmation config replacement. They now verify early refusal before inventory/mutation, socket/directory/missing-file errors, leaf and ancestor symlinks, exact-limit acceptance, syntax/case/order preservation, duplicate/invalid/empty configs, streamed overflow, and cancellation during a read. The original FIFO assertion passes with only its call adapted to supply context; original artifacts remain retained. `go run ./bin/check.go` passes, including race tests, vet, staticcheck, and module/wrapper checks. Tests use disposable filesystem entries and injected inventory, not host block devices. `O_NONBLOCK` avoids FIFO-open waits; it does not make kernel-blocked regular-file I/O interruptible.
 
 ### 13. P2 — Failed plan output does not stop confirmation or application
 
@@ -227,13 +229,13 @@ Review-only test sources and the overlay are retained outside the worktree at:
 /home/nathants/.nina/runs/home_nathants_repos_mirror_b51aa2df9bd3980b_20260904T225854Z_rfHxi/scratch/
 ```
 
-Files: `ensure_review_test.go`, `repair_review_test.go`, `mount_review_test.go`, `system_review_test.go`, `format_review_test.go`, and `review-overlay.json`.
+Files: `ensure_review_test.go`, `repair_review_test.go`, `mount_review_test.go`, `system_review_test.go`, `format_review_test.go`, and `review-overlay.json`. After finding 12, `mount_review_context_test.go` and `review-overlay-context.json` adapt only the original probe's `loadConfig` call to supply `context.Background()`; its assertions are unchanged. Use the adapted overlay against current source; the original remains for the reviewed revision.
 
 From this repository, replay the original review probes without changing source files. Resolution notes take precedence where Admin selected a different policy: issue 3's original automatic-rollback assertion is intentionally superseded by permanent manual-recovery tests, and issue 6's empty-directory replication assertion is superseded by the documented exclusion.
 
 ```bash
 go test -count=1 \
-  -overlay /home/nathants/.nina/runs/home_nathants_repos_mirror_b51aa2df9bd3980b_20260904T225854Z_rfHxi/scratch/review-overlay.json \
+  -overlay /home/nathants/.nina/runs/home_nathants_repos_mirror_b51aa2df9bd3980b_20260904T225854Z_rfHxi/scratch/review-overlay-context.json \
   -run TestAudit -v \
   ./internal/ensurecopies ./internal/repaircopies ./internal/mountdisks \
   ./internal/system ./internal/formatdisk
