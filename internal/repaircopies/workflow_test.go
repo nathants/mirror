@@ -138,10 +138,10 @@ func TestFreshPreviewIsObservationalOnDisks(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	options := commandOptions{snapshot: func(context.Context) (mountdisks.Snapshot, error) {
+	options := Options{Snapshot: func(context.Context) (mountdisks.Snapshot, error) {
 		return mountdisks.Snapshot{Roots: roots, ConfiguredMirrors: 2}, nil
-	}, confirm: func(context.Context) error { t.Fatal("preview asked to mutate"); return nil }, output: io.Discard}
-	if err := run(context.Background(), home, true, false, options); err != nil {
+	}, Confirm: func(context.Context) error { t.Fatal("preview asked to mutate"); return nil }, Output: io.Discard}
+	if err := Run(context.Background(), home, true, false, options); err != nil {
 		t.Fatal(err)
 	}
 	for _, root := range roots {
@@ -176,10 +176,10 @@ func TestCancelledRepairRetainsPendingLogAndRelocks(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	writer := &cancelAfterOutput{cancel: cancel}
-	options := commandOptions{snapshot: func(context.Context) (mountdisks.Snapshot, error) {
+	options := Options{Snapshot: func(context.Context) (mountdisks.Snapshot, error) {
 		return mountdisks.Snapshot{Roots: roots, ConfiguredMirrors: 2}, nil
-	}, confirm: func(context.Context) error { return nil }, output: writer}
-	err := run(ctx, home, false, false, options)
+	}, Confirm: func(context.Context) error { return nil }, Output: writer}
+	err := Run(ctx, home, false, false, options)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancellation error: %v", err)
 	}
@@ -200,8 +200,8 @@ func TestCancelledRepairRetainsPendingLogAndRelocks(t *testing.T) {
 		}
 		t.Cleanup(func() { _ = os.Chmod(root, 0700) })
 	}
-	options.output = io.Discard
-	if err := run(context.Background(), home, false, true, options); err != nil {
+	options.Output = io.Discard
+	if err := Run(context.Background(), home, false, true, options); err != nil {
 		t.Fatal(err)
 	}
 	log, err = Load(filepath.Join(home, ".mirror", repairLogName))
@@ -312,5 +312,41 @@ func TestCancellationDuringReplacementNeverPublishesPartialData(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatal("cancelled replacement leaked temporary file")
+	}
+}
+
+func TestRunRequiresExplicitDependencies(t *testing.T) {
+	for _, options := range []Options{
+		{},
+		{Output: io.Discard},
+		{Snapshot: func(context.Context) (mountdisks.Snapshot, error) {
+			t.Fatal("inventory before output validation")
+			return mountdisks.Snapshot{}, nil
+		}},
+	} {
+		if err := Run(context.Background(), t.TempDir(), true, false, options); err == nil {
+			t.Fatal("missing dependency accepted")
+		}
+	}
+	home, roots, options := progressFixture(t)
+	options.Confirm = nil
+	if err := Run(context.Background(), home, false, false, options); err == nil || !strings.Contains(err.Error(), "confirmation is required") {
+		t.Fatalf("missing confirmation accepted: %v", err)
+	}
+	log, err := Load(filepath.Join(home, ".mirror", repairLogName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, repair := range log.Repairs {
+		if repair.State != RepairPending {
+			t.Fatalf("unconfirmed repair advanced: %+v", repair)
+		}
+	}
+	if err := ValidateCurrentState(context.Background(), log, roots); err != nil {
+		t.Fatal(err)
+	}
+	// An observational preview needs no confirmation, even with safe repairs.
+	if err := Run(context.Background(), home, true, true, options); err != nil {
+		t.Fatal(err)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"time"
 
+	"mirror/internal/mountdisks"
 	"mirror/internal/repaircopies"
 	"mirror/internal/rootfs"
 	"mirror/lib"
@@ -23,8 +24,22 @@ type action struct {
 	metadata                            bool
 }
 
-func Run(ctx context.Context, home string, preview bool) (returnErr error) {
-	state, err := lib.MountedMirrorState(ctx, home)
+// Options supplies the command's inventory and output boundaries.
+// Snapshot must freshly resolve the configured mounted mirrors on every call.
+// The caller must hold the operation lock for the entire Run.
+type Options struct {
+	Snapshot func(context.Context) (mountdisks.Snapshot, error)
+	Output   io.Writer
+}
+
+func Run(ctx context.Context, preview bool, options Options) (returnErr error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if options.Snapshot == nil || options.Output == nil {
+		return errors.New("ensure snapshot and output are required")
+	}
+	state, err := options.Snapshot(ctx)
 	if err != nil {
 		return err
 	}
@@ -33,7 +48,7 @@ func Run(ctx context.Context, home string, preview bool) (returnErr error) {
 		return err
 	}
 	if preview {
-		return apply(ctx, actions, true, os.Stdout)
+		return apply(ctx, actions, true, options.Output)
 	}
 	if len(actions) == 0 {
 		return ctx.Err()
@@ -43,7 +58,7 @@ func Run(ctx context.Context, home string, preview bool) (returnErr error) {
 		return err
 	}
 	defer func() { returnErr = errors.Join(returnErr, guard.Close()) }()
-	current, err := lib.MountedMirrorState(ctx, home)
+	current, err := options.Snapshot(ctx)
 	if err != nil {
 		return err
 	}
@@ -58,7 +73,7 @@ func Run(ctx context.Context, home string, preview bool) (returnErr error) {
 	if err := guard.SetLocked(ctx, false); err != nil {
 		return err
 	}
-	return apply(ctx, actions, false, os.Stdout)
+	return apply(ctx, actions, false, options.Output)
 }
 func plan(ctx context.Context, paths []string) ([]action, error) {
 	observations, err := repaircopies.Scan(ctx, paths)
@@ -209,7 +224,9 @@ func apply(ctx context.Context, actions []action, preview bool, writer io.Writer
 			return err
 		}
 		if preview {
-			fmt.Fprintf(writer, "preview: publish %s on %s (metadata=%v)\n", a.path, a.destination, a.metadata)
+			if _, err := fmt.Fprintf(writer, "preview: publish %s on %s (metadata=%v)\n", a.path, a.destination, a.metadata); err != nil {
+				return err
+			}
 			continue
 		}
 		var err error
@@ -224,7 +241,9 @@ func apply(ctx context.Context, actions []action, preview bool, writer io.Writer
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(writer, "published %s on %s (metadata=%v)\n", a.path, a.destination, a.metadata)
+		if _, err := fmt.Fprintf(writer, "published %s on %s (metadata=%v)\n", a.path, a.destination, a.metadata); err != nil {
+			return err
+		}
 	}
 	return ctx.Err()
 }

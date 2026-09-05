@@ -14,7 +14,7 @@ import (
 	"mirror/internal/mountdisks"
 )
 
-func progressFixture(t *testing.T) (string, []string, commandOptions) {
+func progressFixture(t *testing.T) (string, []string, Options) {
 	t.Helper()
 	home := t.TempDir()
 	roots := []string{t.TempDir(), t.TempDir()}
@@ -28,9 +28,9 @@ func progressFixture(t *testing.T) (string, []string, commandOptions) {
 			_ = os.Chmod(root, 0700)
 		}
 	})
-	return home, roots, commandOptions{snapshot: func(context.Context) (mountdisks.Snapshot, error) {
+	return home, roots, Options{Snapshot: func(context.Context) (mountdisks.Snapshot, error) {
 		return mountdisks.Snapshot{Roots: roots, ConfiguredMirrors: 2}, nil
-	}, confirm: func(context.Context) error { return nil }, output: io.Discard}
+	}, Confirm: func(context.Context) error { return nil }, Output: io.Discard}
 }
 
 type progressWriter struct {
@@ -58,8 +58,8 @@ func TestOperationalFailureRetainsProgressAndStopsLaterRepairs(t *testing.T) {
 					t.Fatalf("publication lacked a durable start: %+v %v", log, err)
 				}
 			}}
-			options.output = writer
-			if err := run(context.Background(), home, false, false, options); err == nil || !strings.Contains(err.Error(), "injected output failure") {
+			options.Output = writer
+			if err := Run(context.Background(), home, false, false, options); err == nil || !strings.Contains(err.Error(), "injected output failure") {
 				t.Fatalf("operational failure lost: %v", err)
 			}
 			log, err := Load(path)
@@ -94,8 +94,8 @@ func TestOperationalFailureRetainsProgressAndStopsLaterRepairs(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			options.output = io.Discard
-			err = run(context.Background(), home, false, true, options)
+			options.Output = io.Discard
+			err = Run(context.Background(), home, false, true, options)
 			if drift {
 				if err == nil || !strings.Contains(err.Error(), "not repaired") {
 					t.Fatalf("completed copy accepted its old scanned bytes: %v", err)
@@ -128,14 +128,14 @@ func TestCheckpointFailureStopsBeforeNextMutation(t *testing.T) {
 		t.Run(failState, func(t *testing.T) {
 			home, roots, options := progressFixture(t)
 			failed := false
-			options.save = func(path string, log Log) error {
+			options.Save = func(path string, log Log) error {
 				if len(log.Repairs) > 1 && log.Repairs[1].State == failState {
 					failed = true
 					return errors.New("injected checkpoint failure")
 				}
 				return Save(path, log)
 			}
-			if err := run(context.Background(), home, false, false, options); err == nil || !strings.Contains(err.Error(), "injected checkpoint failure") || !failed {
+			if err := Run(context.Background(), home, false, false, options); err == nil || !strings.Contains(err.Error(), "injected checkpoint failure") || !failed {
 				t.Fatalf("checkpoint failure did not stop execution: %v", err)
 			}
 			log, err := Load(filepath.Join(home, ".mirror", repairLogName))
@@ -168,12 +168,12 @@ func TestOnlyUnresolvedFindingsRemainReportableOnResume(t *testing.T) {
 			}
 		}
 	}
-	options.confirm = func(context.Context) error { t.Fatal("unresolved-only run requested confirmation"); return nil }
+	options.Confirm = func(context.Context) error { t.Fatal("unresolved-only run requested confirmation"); return nil }
 	var output strings.Builder
-	options.output = &output
+	options.Output = &output
 	for _, resume := range []bool{false, true} {
 		output.Reset()
-		if err := run(context.Background(), home, false, resume, options); !errors.Is(err, ErrUnresolved) {
+		if err := Run(context.Background(), home, false, resume, options); !errors.Is(err, ErrUnresolved) {
 			t.Fatalf("unresolved-only result: %v", err)
 		}
 		if resume && strings.Contains(output.String(), "scanning ") {
@@ -254,9 +254,9 @@ func (rejectPlanWriter) Write(data []byte) (int, error) {
 
 func TestFailedPlanReportCannotReachConfirmationOrMutation(t *testing.T) {
 	home, roots, options := progressFixture(t)
-	options.output = rejectPlanWriter{}
-	options.confirm = func(context.Context) error { t.Fatal("confirmation followed failed report"); return nil }
-	if err := run(context.Background(), home, false, false, options); err == nil || !strings.Contains(err.Error(), "injected plan output failure") {
+	options.Output = rejectPlanWriter{}
+	options.Confirm = func(context.Context) error { t.Fatal("confirmation followed failed report"); return nil }
+	if err := Run(context.Background(), home, false, false, options); err == nil || !strings.Contains(err.Error(), "injected plan output failure") {
 		t.Fatalf("report failure ignored: %v", err)
 	}
 	log, err := Load(filepath.Join(home, ".mirror", repairLogName))

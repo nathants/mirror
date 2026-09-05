@@ -30,10 +30,10 @@ func TestRepairCleanupRelocksOriginalRootNotReplacement(t *testing.T) {
 	writeMirrorFile(t, filepath.Join(roots[0], "books/item"), []byte("good"), good)
 	writeMirrorFile(t, filepath.Join(roots[1], "books/item"), []byte("bad"), good)
 	replaced := false
-	options := commandOptions{
-		output:  io.Discard,
-		confirm: func(context.Context) error { return nil },
-		snapshot: func(context.Context) (mountdisks.Snapshot, error) {
+	options := Options{
+		Output:  io.Discard,
+		Confirm: func(context.Context) error { return nil },
+		Snapshot: func(context.Context) (mountdisks.Snapshot, error) {
 			info, err := os.Stat(roots[1])
 			if err != nil {
 				t.Fatal(err)
@@ -53,7 +53,7 @@ func TestRepairCleanupRelocksOriginalRootNotReplacement(t *testing.T) {
 			return mountdisks.Snapshot{Roots: roots, ConfiguredMirrors: 2}, nil
 		},
 	}
-	if err := run(context.Background(), home, false, false, options); err == nil {
+	if err := Run(context.Background(), home, false, false, options); err == nil {
 		t.Fatal("expected root-loss error")
 	}
 	if !replaced {

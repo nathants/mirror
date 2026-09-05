@@ -260,7 +260,7 @@ func TestPrivilegedHandlersUseTheSameCallerLock(t *testing.T) {
 	platform := fakePlatform(0, map[string]string{"SUDO_UID": account.Uid, "SUDO_GID": account.Gid, "SUDO_USER": "test"}, account)
 	for _, command := range []string{"format", "mount", "unmount"} {
 		var output bytes.Buffer
-		h := productionHandlers(strings.NewReader(""), &output, &output)
+		h := commandHandlers(strings.NewReader(""), &output, &output, copyDependencies{})
 		code, _, stderr := runCLI([]string{command}, platform, h)
 		if code != 1 || !strings.Contains(stderr, "another mirror operation") {
 			t.Fatalf("%s bypassed shared lock: %d %s", command, code, stderr)

@@ -19,7 +19,14 @@ import (
 	"mirror/lib"
 )
 
-func productionHandlers(stdin io.Reader, stdout, stderr io.Writer) handlers {
+// copyDependencies keeps mounted-state discovery and controlling-terminal
+// confirmation at the CLI boundary, shared by the real command workflows.
+type copyDependencies struct {
+	snapshot func(context.Context, string) (mountdisks.Snapshot, error)
+	confirm  func(context.Context, io.Writer, string) error
+}
+
+func commandHandlers(stdin io.Reader, stdout, stderr io.Writer, copies copyDependencies) handlers {
 	return handlers{
 		format: func(ctx context.Context, caller callerIdentity) error {
 			return withLoggedDiskOperation(ctx, caller, "format", stderr, func(os *actionlog.System) error {
@@ -43,10 +50,23 @@ func productionHandlers(stdin io.Reader, stdout, stderr io.Writer) handlers {
 			})
 		},
 		ensureCopies: func(ctx context.Context, preview bool) error {
-			return withOwnLock(ctx, func(home string) error { return ensurecopies.Run(ctx, home, preview) })
+			return withOwnLock(ctx, func(home string) error {
+				return ensurecopies.Run(ctx, preview, ensurecopies.Options{
+					Snapshot: func(ctx context.Context) (mountdisks.Snapshot, error) { return copies.snapshot(ctx, home) },
+					Output:   stdout,
+				})
+			})
 		},
 		repairCopies: func(ctx context.Context, preview, resume bool) error {
-			return withOwnLock(ctx, func(home string) error { return repaircopies.Run(ctx, home, preview, resume) })
+			return withOwnLock(ctx, func(home string) error {
+				return repaircopies.Run(ctx, home, preview, resume, repaircopies.Options{
+					Snapshot: func(ctx context.Context) (mountdisks.Snapshot, error) { return copies.snapshot(ctx, home) },
+					Confirm: func(ctx context.Context) error {
+						return copies.confirm(ctx, stdout, "going to repair the safe files listed above; unresolved files will be left untouched.")
+					},
+					Output: stdout,
+				})
+			})
 		},
 		lock: func(ctx context.Context) error {
 			return withOwnLock(ctx, func(home string) error { return lib.LockDirs(ctx, home, true) })

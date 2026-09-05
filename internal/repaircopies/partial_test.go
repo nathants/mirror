@@ -10,7 +10,7 @@ import (
 	"mirror/internal/mountdisks"
 )
 
-func partialFixture(t *testing.T) (string, []string, commandOptions) {
+func partialFixture(t *testing.T) (string, []string, Options) {
 	t.Helper()
 	home := t.TempDir()
 	roots := []string{t.TempDir(), t.TempDir()}
@@ -31,7 +31,7 @@ func partialFixture(t *testing.T) (string, []string, commandOptions) {
 			_ = os.Chmod(root, 0700)
 		}
 	})
-	return home, roots, commandOptions{snapshot: func(context.Context) (mountdisks.Snapshot, error) {
+	return home, roots, Options{Snapshot: func(context.Context) (mountdisks.Snapshot, error) {
 		return mountdisks.Snapshot{Roots: roots, ConfiguredMirrors: 2}, nil
 	}}
 }
@@ -39,9 +39,9 @@ func partialFixture(t *testing.T) (string, []string, commandOptions) {
 func TestRunRepairsSafeSubsetAndRetainsEveryUnresolvedFinding(t *testing.T) {
 	home, roots, options := partialFixture(t)
 	var output strings.Builder
-	options.output = &output
+	options.Output = &output
 	confirmed := false
-	options.confirm = func(context.Context) error {
+	options.Confirm = func(context.Context) error {
 		confirmed = true
 		data, err := os.ReadFile(filepath.Join(home, ".mirror", repairLogName))
 		if err != nil {
@@ -54,7 +54,7 @@ func TestRunRepairsSafeSubsetAndRetainsEveryUnresolvedFinding(t *testing.T) {
 		}
 		return nil
 	}
-	if err := run(context.Background(), home, false, false, options); err == nil {
+	if err := Run(context.Background(), home, false, false, options); err == nil {
 		t.Fatal("unresolved findings reported as success")
 	}
 	if !confirmed {
@@ -73,8 +73,8 @@ func TestRunRepairsSafeSubsetAndRetainsEveryUnresolvedFinding(t *testing.T) {
 	if !strings.Contains(output.String(), "repaired=1 unresolved=2 failed/uncertain=0 unattempted=0") {
 		t.Errorf("summary concealed partial success: %s", output.String())
 	}
-	options.confirm = func(context.Context) error { t.Fatal("resume tried to reapply completed repairs"); return nil }
-	if err := run(context.Background(), home, false, true, options); err == nil {
+	options.Confirm = func(context.Context) error { t.Fatal("resume tried to reapply completed repairs"); return nil }
+	if err := Run(context.Background(), home, false, true, options); err == nil {
 		t.Fatal("resume concealed remaining unresolved findings")
 	}
 	for _, name := range []string{"a-unresolved", "z-unresolved"} {
@@ -94,9 +94,9 @@ func TestRunRepairsSafeSubsetAndRetainsEveryUnresolvedFinding(t *testing.T) {
 func TestPartialPreviewRetainsAllFindingsWithoutMutation(t *testing.T) {
 	home, roots, options := partialFixture(t)
 	var output strings.Builder
-	options.output = &output
-	options.confirm = func(context.Context) error { t.Fatal("preview requested confirmation"); return nil }
-	if err := run(context.Background(), home, true, false, options); err == nil {
+	options.Output = &output
+	options.Confirm = func(context.Context) error { t.Fatal("preview requested confirmation"); return nil }
+	if err := Run(context.Background(), home, true, false, options); err == nil {
 		t.Fatal("preview hid unresolved findings")
 	}
 	log, err := Load(filepath.Join(home, ".mirror", repairLogName))

@@ -10,6 +10,9 @@ import (
 	"os/user"
 
 	arg "github.com/alexflint/go-arg"
+
+	"mirror/internal/terminal"
+	"mirror/lib"
 )
 
 type emptyOptions struct{}
@@ -75,7 +78,7 @@ func Run(ctx context.Context, arguments []string, stdin io.Reader, stdout, stder
 			lookupEnv:    os.LookupEnv,
 			lookupUserID: user.LookupId,
 		},
-		productionHandlers(stdin, stdout, stderr),
+		commandHandlers(stdin, stdout, stderr, copyDependencies{snapshot: lib.MountedMirrorState, confirm: terminal.Confirm}),
 	)
 }
 
