@@ -127,6 +127,9 @@ func Run(
 }
 
 func (a *app) run(ctx context.Context) error {
+	if err := a.preflightTools(ctx); err != nil {
+		return err
+	}
 	disks, err := a.listDisks(ctx)
 	if err != nil {
 		return err
@@ -172,6 +175,11 @@ func (a *app) run(ctx context.Context) error {
 		return ErrDeclined
 	}
 
+	// Recheck tools first so the selected disk's identity is revalidated last,
+	// immediately before destructive work rather than before version probes.
+	if err := a.preflightTools(ctx); err != nil {
+		return err
+	}
 	after, err := a.inspectSafeDevice(ctx, device)
 	if err != nil {
 		return fmt.Errorf("revalidate selected device: %w", err)

@@ -63,6 +63,11 @@ func newFakeSystem() *fakeSystem {
 }
 
 func (f *fakeSystem) Output(_ context.Context, name string, args ...string) ([]byte, error) {
+	// Device-free version probes are not storage actions. Keep them out of
+	// existing command-count assertions; tool tests record/assert them separately.
+	if contains(args, "--version") || (name == "mkfs.ext4" && contains(args, "-V")) {
+		return []byte("test tool version\n"), nil
+	}
 	f.calls = append(f.calls, recordedCall{kind: "output", rawName: name, name: name, args: append([]string(nil), args...)})
 
 	switch name {

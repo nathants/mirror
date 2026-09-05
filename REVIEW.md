@@ -139,7 +139,7 @@ Unmount uses the same preflight policy as mounted-root discovery/mounting. It re
 
 **Resolution (2026-09-05):** Shared inventory preflight retains all disk/LUKS/mapper identity, holder, and mount-topology checks. Writable-device and decrypted-ext4 requirements now live in a separate mountability check used by mount preflight/revalidation and mounted-root discovery, not unmount. Confirmed unmount can deactivate an identified mapper with an unknown or non-ext4 filesystem and read-only disk/partition/mapper devices. New injected-OS regressions first reproduced these failures, then verified mounted and open-only recovery, exact unmount/close ordering, declined confirmation without mutation, continued mount/root-discovery refusal, rejection of unsafe identity/holders/mounts, and post-confirmation identity drift. The original review probe and `go run ./bin/check.go` pass, including race tests, vet, staticcheck, and module/wrapper checks. No host block devices were accessed; manual-recovery logging and no-rollback policy remain unchanged.
 
-### 10. P2 — Formatter discovers missing required tools only after erasing the partition table
+### 10. [done] P2 — Formatter discovers missing required tools only after erasing the partition table
 
 **Location:** `internal/formatdisk/formatdisk.go:129-220,263-299`; `internal/formatdisk/system.go:12-19`.
 
@@ -148,6 +148,8 @@ The preflight inventories disks and mountpoints but never checks availability of
 **Evidence:** `TestAuditMissingToolDetectedBeforeDiskErase` injected missing `cryptsetup`; the formatter had already issued successful destructive `fdisk` before returning the missing-tool error. No real disk was used.
 
 **Recommendation:** Verify required executables and necessary capabilities before requesting destructive confirmation. Keep the immediate identity/state revalidation afterward. Do not install dependencies automatically as part of formatting.
+
+**Resolution (2026-09-05):** Formatter now probes all eight required external tools in device-free version modes before selection/confirmation and repeats the probes before final disk-state revalidation. Relevant required options precede the version flag, so missing executables, startup failures, and rejected flags fail preflight; actual inventory reads still exercise the JSON schemas. Each probe has a ten-second context deadline and uses the read-only `Output` boundary, so action logs retain it as an observation rather than a storage mutation. No dependencies are installed. Permanent tests first reproduced late failure, then verified missing tools, unsupported flags, disappearance during confirmation, exact device-free probe arguments, deadlines, cancellation, and unchanged destructive-command counts. `go run ./bin/check.go` passes, including race tests, vet, staticcheck, and module/wrapper checks. These tests use an injected OS boundary; passing startup probes does not prove future kernel/disk success. The original review fake intercepted only `Run`, not `Output`; it now simulates a tool that passes startup probes and fails later, so its early-refusal assertion is superseded by the permanent tests that model availability consistently across both methods.
 
 ### 11. P2 — Command cancellation does not own descendants or bound inherited output pipes
 

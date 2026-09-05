@@ -40,7 +40,7 @@ mirror lock
 mirror unlock
 ```
 
-`mirror format` interactively selects a whole `/dev/sdX` disk, verifies that it is inactive, then creates a GPT, LUKS2 container, and ext4 filesystem.
+`mirror format` interactively selects a whole `/dev/sdX` disk, verifies that it is inactive, then creates a GPT, LUKS2 container, and ext4 filesystem. Before selection or destructive confirmation, it runs device-free startup/option probes for `lsblk`, `findmnt`, `fdisk`, `cryptsetup`, `mkfs.ext4`, `blkid`, `mount`, and `chown`. The probes use version modes, with relevant required options supplied first, and have ten-second context deadlines. They repeat after confirmation, before final disk-state revalidation. Missing executables, broken tool startup, or rejected options stop formatting before partitioning; dependencies are never installed automatically. Passing preflight does not guarantee later kernel, disk, or tool operations will succeed.
 
 `mirror mount` resolves the GPT disk identifiers in `~/.mirror/disks`, unlocks available disks, and mounts them. `mirror unmount` unmounts and closes configured disks, including recovery of an open but unmounted mapper. Deactivation does not require ext4 on the decrypted mapper or writable disk/partition/mapper devices: unknown or non-ext4 filesystems and read-only devices can still be unmounted and closed after confirmation. Disk identity, the LUKS partition relationship, expected mapper name, holder checks, mount-source agreement, and post-confirmation state revalidation remain required. Mounting and mounted-root discovery still require writable devices and ext4 on an open mapper.
 
