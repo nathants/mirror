@@ -80,6 +80,8 @@ SIGINT/SIGTERM cancel inventory, prompts, and work between bounded reads/writes.
 
 Only files, directories, and symlinks are supported.
 
+The `.b2sum` suffix is reserved for checksum sidecars: regular payload files and symlinks must not end in `.b2sum`. Rename such application files before placing them in the mirror. A regular `name.b2sum` is always metadata for the regular payload `name`, never a payload itself; a sidecar cannot have its own sidecar. Directory names may end in `.b2sum`. Ensure refuses checksum-only paths with no regular data source on any mounted mirror, instead of silently reporting success. Repair still retains orphan sidecars as evidence, including malformed bytes without a vote. The suffix defines the namespace, not a guess about file contents: damaged metadata must not be automatically renamed or ingested as payload.
+
 Only immutable data should go in the mirror. Make copies instead of mutations. Mutations will trigger repair.
 
 Each disk reserves a private, marked `.mirror-internal/` directory. Verified replacements are staged in `tmp/`; corrupt data and sidecars are retained on the affected disk under `quarantine/<unique-record>/<original-relative-path>`. Neither subtree is scanned or replicated, and evidence is not automatically deleted. Existing unmarked content at this reserved path is rejected rather than adopted. Crash-left temporary files remain distinguishable from user data. Inspect them manually; do not move them into normal data without deciding what they represent. Older `.corrupted.N` files are not automatically migrated or inferred to be evidence; move any such known backups out of the mirrored object namespace before running ensure-copies.

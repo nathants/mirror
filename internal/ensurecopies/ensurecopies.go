@@ -88,10 +88,11 @@ func plan(ctx context.Context, paths []string) ([]action, error) {
 				dataCopies = append(dataCopies, copy)
 			}
 		}
-		observations[path] = dataCopies
-		if len(dataCopies) > 0 {
-			all[path] = true
+		if len(dataCopies) == 0 {
+			return nil, fmt.Errorf("no data source for %q: .b2sum is reserved for checksum sidecars, not payload files; restore missing data or rename an intended payload before ingest", path)
 		}
+		observations[path] = dataCopies
+		all[path] = true
 	}
 	for path := range links {
 		all[path] = true

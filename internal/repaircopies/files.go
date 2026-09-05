@@ -193,14 +193,20 @@ func scanRoot(ctx context.Context, root *rootfs.Root, progress func(string, stri
 					return err
 				}
 			case entry.Type()&os.ModeSymlink != 0:
+				if err := validateDataPath(rel); err != nil {
+					return err
+				}
 				continue
 			case entry.Type().IsRegular():
 				if strings.HasSuffix(rel, checksumSuffix) {
 					dataPath := strings.TrimSuffix(rel, checksumSuffix)
-					if err := validateRelativePath(dataPath); err != nil {
-						return err
+					if err := validateDataPath(dataPath); err != nil {
+						return fmt.Errorf("invalid sidecar %q: .b2sum is reserved for checksum sidecars of regular payload files: %w", filepath.Join(root.Path(), rel), err)
 					}
-					if _, err := root.Stat(dataPath); err == nil {
+					if info, err := root.Stat(dataPath); err == nil {
+						if !info.Mode().IsRegular() {
+							return fmt.Errorf("invalid sidecar %q: .b2sum is reserved for checksum sidecars of regular payload files", filepath.Join(root.Path(), rel))
+						}
 						continue // Existing data is observed with its sidecar below.
 					} else if !errors.Is(err, os.ErrNotExist) {
 						return err
@@ -500,7 +506,7 @@ func replace(ctx context.Context, root *rootfs.Root, destination, oldHash, expec
 // PublishMissing is the ensure-copies publication path: no existing data or
 // metadata may be replaced, and the copied bytes must match the planned hash.
 func PublishMissing(ctx context.Context, source, destination, path, checksum string) error {
-	if err := validateRelativePath(path); err != nil {
+	if err := validateDataPath(path); err != nil {
 		return err
 	}
 	src, err := rootfs.Open(source)
@@ -538,7 +544,7 @@ func PublishMissing(ctx context.Context, source, destination, path, checksum str
 	return PublishMissingSidecar(ctx, destination, path, checksum)
 }
 func PublishMissingSidecar(ctx context.Context, rootPath, path, checksum string) error {
-	if err := validateRelativePath(path); err != nil {
+	if err := validateDataPath(path); err != nil {
 		return err
 	}
 	if !validChecksum(checksum) {

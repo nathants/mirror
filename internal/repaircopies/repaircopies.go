@@ -76,7 +76,7 @@ func BuildLog(startedAt, scannedAt time.Time, roots []string, configured int, ob
 	}
 	sort.Strings(paths)
 	for _, path := range paths {
-		if err := validateRelativePath(path); err != nil {
+		if err := validateDataPath(path); err != nil {
 			return Log{}, err
 		}
 		copies := append([]Copy(nil), observations[path]...)
@@ -230,7 +230,7 @@ func validateLog(log Log) error {
 	}
 	previous := ""
 	for i, repair := range log.Repairs {
-		if err := validateRelativePath(repair.RelPath); err != nil {
+		if err := validateDataPath(repair.RelPath); err != nil {
 			return err
 		}
 		if i > 0 && repair.RelPath <= previous {
@@ -300,6 +300,18 @@ func validateCanonicalRoots(roots []string) error {
 func validateRelativePath(path string) error {
 	if !utf8.ValidString(path) || !rootfs.UserPath(path) {
 		return fmt.Errorf("invalid relative path in repair log: %q", path)
+	}
+	return nil
+}
+
+// Payload files and symlinks cannot occupy the checksum metadata namespace.
+// Directory components may use the suffix; they are never checksum sidecars.
+func validateDataPath(path string) error {
+	if err := validateRelativePath(path); err != nil {
+		return err
+	}
+	if strings.HasSuffix(path, checksumSuffix) {
+		return fmt.Errorf("invalid payload path %q: .b2sum is reserved for checksum sidecars; rename payload files before ingest", path)
 	}
 	return nil
 }

@@ -61,7 +61,7 @@ For example, a mount that takes effect before cancellation leaves `current.mount
 
 **Resolution (2026-09-05, Admin-selected policy):** Admin chose explicit manual recovery instead of automatic rollback. Format/mount rollback code and success-only cleanup flags are removed. Their CLI handlers, plus unmount, now retain private per-invocation JSONL logs under `~/.mirror/operations/`, sync action starts before execution, record succeeded versus failed/uncertain outcomes, and retain preflight/verification observations. Failures trigger read-only `lsblk`/`findmnt` snapshots with an independent 30-second context; unavailable or invalid diagnostics are marked unknown. Console messages identify the log and warn that mounts/mappers may remain active and that format must not be rerun merely to retry open/mount. Passwords/stdin and external command output streams are not copied to the journal. New tests cover failure after open/mount/unmount/close side effects, format progress, no unrequested rollback, durable start-before-invocation, log retention/privacy, password exclusion, log-write failure preventing execution, and the caller operation lock. `go run ./bin/check.go` passes, including race tests. The original automatic-rollback probe is superseded by these manual-recovery assertions; copy/repair directory relocking remains unchanged.
 
-### 4. P1 — A legitimate payload ending in `.b2sum` is silently omitted
+### 4. [done] P1 — A legitimate payload ending in `.b2sum` is silently omitted
 
 **Location:** `internal/repaircopies/files.go:198-200`; `internal/ensurecopies/ensurecopies.go:59-85`; `readme.md:77-79`.
 
@@ -72,6 +72,8 @@ This is distinct from finding 1: one loses genuine checksum evidence; this one s
 **Evidence:** `TestAuditStandaloneChecksumNamedPayloadIsNotSilentlySkipped` completed plan/apply successfully with no actions and no destination file.
 
 **Recommendation:** Define and enforce the payload/metadata namespace at ingest. Either support arbitrary payload names through unambiguous metadata storage, or explicitly reject conflicting/orphan names with a useful explanation. Do not report success after silently excluding them.
+
+**Resolution (2026-09-05, Admin-selected policy):** `.b2sum` is reserved for checksum metadata, not regular payload files or symlinks. Publication and repair-log validation reject reserved payload names; scanning rejects sidecars of sidecars, invalid base names, and sidecars attached to non-regular entries. Directory names may still use the suffix. Ensure now refuses checksum-only paths with no regular data source on any mounted mirror, with instructions to restore data or rename an intended payload. Repair still retains legitimate orphan evidence, including malformed bytes without votes, preserving finding 1's fix. The namespace is explicit rather than inferred from contents. New namespace tests first reproduced the defects and now pass, as does the original review probe. Existing sidecar-evidence and ensure tests remain passing. `go run ./bin/check.go` passes, including race tests, vet, staticcheck, and module/wrapper checks. The separate preflight collision policy in finding 5 remains open.
 
 ### 5. P2 — Ensure preflight does not check the sidecar destinations it will publish
 
