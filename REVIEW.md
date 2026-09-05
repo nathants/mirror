@@ -89,7 +89,7 @@ A common trigger is deleted data with its correct checksum sidecar still present
 
 **Resolution (2026-09-05):** Ensure planning and regular-file publication now share a context-aware check of both destination paths. Any existing sidecar, including matching checksum evidence, rejects the whole plan before directory unlocking or publication; no sidecar is adopted, overwritten, or deleted. Symlinks reserve only their actual destination because they have no sidecars. New preflight tests first reproduced acceptance of matching, conflicting, malformed, and directory obstructions and now verify early refusal without partial actions or mutations. They replace the earlier ensure consumer test that expected an orphan collision to fail only during apply. Additional tests preserve publication-time rejection of a newly appeared sidecar and avoid false sidecar reservations for symlinks. The original review probe and `go run ./bin/check.go` pass, including race tests, vet, staticcheck, and module/wrapper checks.
 
-### 6. P2 — Empty directories are never replicated
+### 6. [done] P2 — Empty directories are never replicated
 
 **Location:** `internal/ensurecopies/ensurecopies.go:59-85,148-182`; `internal/repaircopies/files.go:168-219`.
 
@@ -98,6 +98,8 @@ Both scans recurse through directories but retain only files or symlinks. Direct
 **Evidence:** `TestAuditEmptyDirectoryIsReplicated` returned a successful empty plan/apply but did not create the destination directory.
 
 **Recommendation:** Include directory entries in the ensure plan, with type-conflict checks and explicit creation ordering. If directory structure is deliberately out of scope, the command/documentation must stop claiming general directory support and expose the omission.
+
+**Resolution (2026-09-05, Admin-selected policy):** Empty-directory replication is intentionally out of scope for immutable file storage. `readme.md` now states that only regular files and supported symlinks are replicated, parent directories are created as needed, and empty directories or directory-only trees produce no actions, including in preview. Existing empty directories are not deleted. `NINA.md` records this contract. This is a documentation-only resolution; runtime behavior and tests are unchanged. The original review-only replication probe is superseded by this explicit policy, not a remaining implementation defect.
 
 ### 7. P2 — Ordinary relative symlinks unnecessarily block an entire ensure run
 
@@ -215,7 +217,7 @@ Review-only test sources and the overlay are retained outside the worktree at:
 
 Files: `ensure_review_test.go`, `repair_review_test.go`, `mount_review_test.go`, `system_review_test.go`, `format_review_test.go`, and `review-overlay.json`.
 
-From this repository, replay the original review probes without changing source files. Resolution notes take precedence where Admin selected a different policy: issue 3's original automatic-rollback assertion is intentionally superseded by permanent manual-recovery tests.
+From this repository, replay the original review probes without changing source files. Resolution notes take precedence where Admin selected a different policy: issue 3's original automatic-rollback assertion is intentionally superseded by permanent manual-recovery tests, and issue 6's empty-directory replication assertion is superseded by the documented exclusion.
 
 ```bash
 go test -count=1 \
