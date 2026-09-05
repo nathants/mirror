@@ -211,13 +211,15 @@ Format and mount received the streams supplied to `cli.Run`; ensure/repair inste
 
 **Validation:** Permanent regressions failed before the fix and now pass. Full-workflow tests use disposable roots and injected inventory/confirmation, exercising real CLI dispatch, shared locking, preview, data/sidecar/symlink publication, repair decline/resume, durable journals, inventory drift/failure, output failure/cancellation, relocking, and idempotence. Existing repair checkpoint and safe-subset tests now exercise the public command directly. `go run ./bin/check.go` passes, including race tests, vet, staticcheck, module checks, whitespace, and wrapper syntax. No host block devices or destructive external tools were used.
 
-### 16. P3 — Image-building automation is in the application command tree
+### 16. [done] P3 — Image-building automation is in the application command tree
 
 **Location:** `cmd/bake-e2e-image/main.go`; `bin/bake-e2e-image:4`; `bin/check.go:77-81`; `NINA.md`.
 
 The image builder is ordinary standard-library repository automation, but lives under `cmd/` and has its own usage-facing command. This conflicts with the project's explicit placement rule for simple automation (`bin/*.go`) and blurs the otherwise single-application layout. The wrapper checker hardcodes that misplaced path, so it enforces the divergence.
 
 **Recommendation:** Move the builder to a Go automation file under `bin/`, adjust its thin wrapper and checker together, and remove the old command path. VM-only guest helpers can remain under tests.
+
+**Resolution (2026-09-05):** Moved the builder to `bin/bake-e2e-image.go`, corrected its source-relative repository root, updated the thin wrapper and wrapper checker, and removed the old command path. A build constraint keeps the standalone main separate from `bin/check.go`; explicit filename checks retain normal/race compilation, vet, and staticcheck coverage. The updated wrapper assertion failed before the move and now passes. Invoking the wrapper from `/tmp` with an invalid argument reaches the expected usage rejection without VM activity. `go run ./bin/check.go` passes. The VM-building sequence is unchanged; no VM was created or image rebuilt for this placement-only change.
 
 ### 17. P3 — The only backlog item is already implemented
 

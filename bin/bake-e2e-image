@@ -1,4 +1,4 @@
 #!/bin/bash
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
-exec go run ./cmd/bake-e2e-image "$@"
+exec go run ./bin/bake-e2e-image.go "$@"

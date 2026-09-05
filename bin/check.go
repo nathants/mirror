@@ -56,6 +56,12 @@ func main() {
 		{"go", "test", "-race", "./..."},
 		{"go", "vet", "./..."},
 		{"staticcheck", "./..."},
+		// Standalone automation is build-constrained to avoid multiple mains in
+		// bin. Explicit file arguments keep it covered without executing a VM.
+		{"go", "test", "./bin/bake-e2e-image.go"},
+		{"go", "test", "-race", "./bin/bake-e2e-image.go"},
+		{"go", "vet", "./bin/bake-e2e-image.go"},
+		{"staticcheck", "./bin/bake-e2e-image.go"},
 		{"go", "mod", "verify"},
 		{"go", "mod", "tidy", "-diff"},
 		{"git", "diff", "--check"},
@@ -75,7 +81,7 @@ func main() {
 
 	const wrapperPrefix = "#!/bin/bash\nset -euo pipefail\ncd -- \"$(dirname -- \"${BASH_SOURCE[0]}\")/..\"\n"
 	expectedWrappers := map[string]string{
-		"bake-e2e-image": wrapperPrefix + "exec go run ./cmd/bake-e2e-image \"$@\"\n",
+		"bake-e2e-image": wrapperPrefix + "exec go run ./bin/bake-e2e-image.go \"$@\"\n",
 		"mirror":         wrapperPrefix + "exec ./mirror \"$@\"\n",
 		"mirror-build":   wrapperPrefix + "exec go build -trimpath -o ./mirror ./cmd/mirror\n",
 	}

@@ -1,3 +1,6 @@
+//go:build ignore
+
+// Run with go run ./bin/bake-e2e-image.go; checked explicitly by bin/check.go.
 package main
 
 import (
@@ -31,7 +34,7 @@ func run() (returnErr error) {
 	if !ok {
 		return fmt.Errorf("could not locate source repository")
 	}
-	repo := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), "../../"))
+	repo := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), ".."))
 	work, err := os.MkdirTemp("", "mirror-e2e-image.")
 	if err != nil {
 		return fmt.Errorf("create temporary directory: %w", err)
