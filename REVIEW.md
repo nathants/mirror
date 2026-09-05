@@ -101,7 +101,7 @@ Both scans recurse through directories but retain only files or symlinks. Direct
 
 **Resolution (2026-09-05, Admin-selected policy):** Empty-directory replication is intentionally out of scope for immutable file storage. `readme.md` now states that only regular files and supported symlinks are replicated, parent directories are created as needed, and empty directories or directory-only trees produce no actions, including in preview. Existing empty directories are not deleted. `NINA.md` records this contract. This is a documentation-only resolution; runtime behavior and tests are unchanged. The original review-only replication probe is superseded by this explicit policy, not a remaining implementation defect.
 
-### 7. P2 — Ordinary relative symlinks unnecessarily block an entire ensure run
+### 7. [done] P2 — Ordinary relative symlinks unnecessarily block an entire ensure run
 
 **Location:** `internal/ensurecopies/ensurecopies.go:168-175`; `readme.md:77-79`.
 
@@ -110,6 +110,8 @@ Both scans recurse through directories but retain only files or symlinks. Direct
 **Evidence:** `TestAuditOrdinaryRelativeSymlinkIsSupported` failed on `link -> target` before any copying.
 
 **Recommendation:** Preserve supported symlink targets opaquely and enforce confinement on filesystem access, not an arbitrary target prefix. If external-target restrictions are actually wanted, define that policy explicitly and validate it consistently.
+
+**Resolution (2026-09-05):** Removed the `../` target-prefix restriction and its unused import. Targets remain opaque strings read and published through confined parent descriptors; no target normalization, traversal, or checksum sidecars are introduced. New tests first reproduced the failures and now verify exact replication of ordinary, dot-prefixed, unnormalized, and parent-relative targets, absolute directory targets, dangling links, and self-loops. They cover preview without parent creation, idempotence, untouched external data, target-string disagreement, and source drift before publication. Documentation makes clear that copying a link does not mirror its target data or prevent other programs from following it outside the mirror. The original review probe and `go run ./bin/check.go` pass, including race tests, vet, staticcheck, and module/wrapper checks; existing no-symlink-traversal protections remain unchanged.
 
 ### 8. P2 — One unresolved file discards the completed scan and hides subsequent damage
 

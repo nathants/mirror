@@ -78,7 +78,9 @@ SIGINT/SIGTERM cancel inventory, prompts, and work between bounded reads/writes.
 
 ## Notes
 
-Mirror replicates regular files and supported symlinks, creating parent directories as needed. Empty directories and directory-only trees are intentionally not replicated: they produce no copy actions, including in preview. Existing empty directories are not deleted. Directory structure is a container for mirrored entries, not independently mirrored data; other filesystem object types are unsupported.
+Mirror replicates regular files and symlinks, creating parent directories as needed. Empty directories and directory-only trees are intentionally not replicated: they produce no copy actions, including in preview. Existing empty directories are not deleted. Directory structure is a container for mirrored entries, not independently mirrored data; other filesystem object types are unsupported.
+
+Symlink targets are preserved exactly, without normalization or traversal. Relative targets such as `target`, `./target`, and `../target`, absolute targets, dangling links, and loops are all copied as links, without checksum sidecars. Ensure rejects differing target strings across copies and rechecks the source target before publication. Copying a link does not mirror the data it points to; a link can resolve outside the mirror when another program follows it.
 
 The `.b2sum` suffix is reserved for checksum sidecars: regular payload files and symlinks must not end in `.b2sum`. Rename such application files before placing them in the mirror. A regular `name.b2sum` is always metadata for the regular payload `name`, never a payload itself; a sidecar cannot have its own sidecar. Directory names may end in `.b2sum`. Ensure refuses checksum-only paths with no regular data source on any mounted mirror, instead of silently reporting success. Repair still retains orphan sidecars as evidence, including malformed bytes without a vote. The suffix defines the namespace, not a guess about file contents: damaged metadata must not be automatically renamed or ingested as payload.
 

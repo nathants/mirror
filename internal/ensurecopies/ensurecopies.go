@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
-	"strings"
 	"time"
 
 	"mirror/internal/repaircopies"
@@ -194,9 +193,6 @@ func scanLinks(ctx context.Context, root *rootfs.Root, dir string, links map[str
 			target, err := root.Readlink(rel)
 			if err != nil {
 				return err
-			}
-			if !strings.HasPrefix(target, "../") {
-				return fmt.Errorf("only ../ relative symlinks are supported: %s", rel)
 			}
 			// Preserve links as opaque entries, never follow them while copying.
 			if links[rel] == nil {
