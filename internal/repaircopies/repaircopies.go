@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -17,13 +16,20 @@ import (
 )
 
 const (
-	LogVersion      = 3
-	StatusScanning  = "scanning"
-	StatusPending   = "pending"
-	StatusClean     = "clean"
-	StatusCompleted = "completed"
-	checksumSuffix  = ".b2sum"
+	LogVersion       = 4
+	StatusScanning   = "scanning"
+	StatusPending    = "pending"
+	StatusClean      = "clean"
+	StatusCompleted  = "completed"
+	StatusUnresolved = "unresolved"
+	RepairPending    = "pending"
+	RepairStarted    = "started"
+	RepairFailed     = "failed/uncertain"
+	RepairCompleted  = "completed"
+	checksumSuffix   = ".b2sum"
 )
+
+var ErrUnresolved = errors.New("unresolved repair findings remain")
 
 // Sidecar records a hash of the exact metadata bytes for drift detection and
 // an optional canonical checksum for voting. A nil Sidecar means absent.
@@ -45,16 +51,28 @@ type Repair struct {
 	RelPath  string `json:"path"`
 	Checksum string `json:"repair_checksum"`
 	Copies   []Copy `json:"copies"`
+	State    string `json:"state"`
+	Error    string `json:"error,omitempty"`
+}
+
+// Unresolved retains all observed evidence and the consensus refusal reason.
+// It is never an apply target; manual resolution requires a fresh scan.
+type Unresolved struct {
+	RelPath string `json:"path"`
+	Copies  []Copy `json:"copies"`
+	Reason  string `json:"reason"`
 }
 type Log struct {
-	Version           int       `json:"version"`
-	Status            string    `json:"status"`
-	StartedAt         time.Time `json:"started_at"`
-	ScannedAt         time.Time `json:"scanned_at"`
-	CompletedAt       time.Time `json:"completed_at"`
-	Roots             []string  `json:"roots"`
-	ConfiguredMirrors int       `json:"configured_mirrors"`
-	Repairs           []Repair  `json:"repairs"`
+	Version           int          `json:"version"`
+	Status            string       `json:"status"`
+	StartedAt         time.Time    `json:"started_at"`
+	ScannedAt         time.Time    `json:"scanned_at"`
+	CompletedAt       time.Time    `json:"completed_at"`
+	Roots             []string     `json:"roots"`
+	ConfiguredMirrors int          `json:"configured_mirrors"`
+	Repairs           []Repair     `json:"repairs"`
+	Unresolved        []Unresolved `json:"unresolved"`
+	Error             string       `json:"error,omitempty"`
 }
 
 func NewScanningLog(startedAt time.Time, roots []string, configured int) (Log, error) {
@@ -65,6 +83,8 @@ func NewScanningLog(startedAt time.Time, roots []string, configured int) (Log, e
 // BuildLog counts each mirror at most once per candidate. Exactly one candidate
 // must have support from more than half of ALL configured mirrors. Disagreement
 // never increases the denominator and multiple qualifying candidates are refused.
+// ErrUnresolved accompanies a valid completed scan containing both safe repairs
+// and every unresolved finding. Other errors do not return a usable log.
 func BuildLog(startedAt, scannedAt time.Time, roots []string, configured int, observations map[string][]Copy) (Log, error) {
 	log := Log{Version: LogVersion, Status: StatusClean, StartedAt: startedAt.UTC(), ScannedAt: scannedAt.UTC(), Roots: canonicalStrings(roots), ConfiguredMirrors: configured}
 	if err := validateLog(log); err != nil {
@@ -108,17 +128,34 @@ func BuildLog(startedAt, scannedAt time.Time, roots []string, configured int, ob
 		}
 		winner, err := uniqueWinner(copies, configured)
 		if err != nil {
-			return Log{}, fmt.Errorf("cannot safely repair %s: %w", path, err)
+			log.Unresolved = append(log.Unresolved, Unresolved{RelPath: path, Copies: copies, Reason: err.Error()})
+			continue
 		}
 		if clean && dataChecksum != "" {
 			continue // Consensus confirmed existing data; evidence alone is not repaired.
 		}
-		log.Repairs = append(log.Repairs, Repair{RelPath: path, Checksum: winner, Copies: copies})
+		log.Repairs = append(log.Repairs, Repair{RelPath: path, Checksum: winner, Copies: copies, State: RepairPending})
 	}
 	if len(log.Repairs) > 0 {
 		log.Status = StatusPending
+	} else if len(log.Unresolved) > 0 {
+		log.Status = StatusUnresolved
 	}
-	return log, validateLog(log)
+	if err := validateLog(log); err != nil {
+		return Log{}, err
+	}
+	return log, unresolvedError(log)
+}
+
+func unresolvedError(log Log) error {
+	if len(log.Unresolved) == 0 {
+		return nil
+	}
+	failures := []error{ErrUnresolved}
+	for _, finding := range log.Unresolved {
+		failures = append(failures, fmt.Errorf("cannot safely repair %s: %s", finding.RelPath, finding.Reason))
+	}
+	return errors.Join(failures...)
 }
 func uniqueWinner(copies []Copy, configured int) (string, error) {
 	counts := make(map[string]int)
@@ -149,38 +186,22 @@ func uniqueWinner(copies []Copy, configured int) (string, error) {
 	}
 	return "", errors.New("no data copy matches the majority checksum")
 }
-func PrintRepairs(writer io.Writer, log Log) error {
-	if writer == nil {
-		return errors.New("repair output is required")
-	}
-	if err := validateLog(log); err != nil {
-		return err
-	}
-	for _, repair := range log.Repairs {
-		fmt.Fprintln(writer, repair.RelPath)
-		for _, copy := range repair.Copies {
-			value := "missing"
-			if copy.Sidecar != nil {
-				value = copy.Sidecar.Value
-				if value == "" {
-					value = "malformed (bytes hash " + copy.Sidecar.Hash + ")"
-				}
-			}
-			actual := copy.ActualChecksum
-			if actual == "" {
-				actual = "missing (sidecar evidence only; not a repair target)"
-			}
-			fmt.Fprintf(writer, "  disk: %s\n    sidecar: %s\n    actual:  %s\n", copy.Root, value, actual)
-		}
-	}
-	return nil
-}
 func MarkCompleted(log Log, completedAt time.Time) (Log, error) {
 	if err := RequirePending(log); err != nil {
 		return Log{}, err
 	}
+	log.Repairs = append([]Repair(nil), log.Repairs...)
+	for i := range log.Repairs {
+		log.Repairs[i].State = RepairCompleted
+		log.Repairs[i].Error = ""
+	}
+	log.Error = ""
 	log.Status = StatusCompleted
 	log.CompletedAt = completedAt.UTC()
+	if len(log.Unresolved) > 0 {
+		log.Status = StatusUnresolved
+		log.CompletedAt = time.Time{}
+	}
 	return log, validateLog(log)
 }
 func RequirePending(log Log) error {
@@ -204,11 +225,11 @@ func validateLog(log Log) error {
 	}
 	switch log.Status {
 	case StatusScanning:
-		if !log.ScannedAt.IsZero() || !log.CompletedAt.IsZero() || len(log.Repairs) != 0 {
+		if !log.ScannedAt.IsZero() || !log.CompletedAt.IsZero() || len(log.Repairs) != 0 || len(log.Unresolved) != 0 {
 			return errors.New("scanning repair log contains completed scan state")
 		}
 	case StatusClean:
-		if log.ScannedAt.IsZero() || !log.CompletedAt.IsZero() || len(log.Repairs) != 0 {
+		if log.ScannedAt.IsZero() || !log.CompletedAt.IsZero() || len(log.Repairs) != 0 || len(log.Unresolved) != 0 {
 			return errors.New("clean repair log has invalid scan state")
 		}
 	case StatusPending:
@@ -216,8 +237,12 @@ func validateLog(log Log) error {
 			return errors.New("pending repair log has invalid scan state")
 		}
 	case StatusCompleted:
-		if log.ScannedAt.IsZero() || log.CompletedAt.IsZero() || len(log.Repairs) == 0 {
+		if log.ScannedAt.IsZero() || log.CompletedAt.IsZero() || len(log.Repairs) == 0 || len(log.Unresolved) != 0 || log.Error != "" {
 			return errors.New("completed repair log has invalid completion state")
+		}
+	case StatusUnresolved:
+		if log.ScannedAt.IsZero() || !log.CompletedAt.IsZero() || len(log.Unresolved) == 0 {
+			return errors.New("unresolved repair log has invalid scan state")
 		}
 	default:
 		return fmt.Errorf("unknown repair log status: %q", log.Status)
@@ -246,6 +271,41 @@ func validateLog(log Log) error {
 		winner, err := uniqueWinner(repair.Copies, log.ConfiguredMirrors)
 		if err != nil || winner != repair.Checksum {
 			return fmt.Errorf("repair checksum is not the logged unique strict majority for %s", repair.RelPath)
+		}
+		switch repair.State {
+		case RepairPending, RepairStarted, RepairCompleted:
+			if repair.Error != "" {
+				return fmt.Errorf("repair %s has an error without a failed state", repair.RelPath)
+			}
+		case RepairFailed:
+			if repair.Error == "" {
+				return fmt.Errorf("failed repair %s lacks its error", repair.RelPath)
+			}
+		default:
+			return fmt.Errorf("invalid repair state for %s: %q", repair.RelPath, repair.State)
+		}
+		if (log.Status == StatusCompleted || log.Status == StatusUnresolved) && repair.State != RepairCompleted {
+			return errors.New("finished repair log contains unfinished safe repairs")
+		}
+	}
+	previous = ""
+	for i, finding := range log.Unresolved {
+		if err := validateDataPath(finding.RelPath); err != nil {
+			return err
+		}
+		if i > 0 && finding.RelPath <= previous {
+			return errors.New("unresolved paths are not sorted and unique")
+		}
+		previous = finding.RelPath
+		j := sort.Search(len(log.Repairs), func(j int) bool { return log.Repairs[j].RelPath >= finding.RelPath })
+		if j < len(log.Repairs) && log.Repairs[j].RelPath == finding.RelPath {
+			return errors.New("unresolved path is also a repair target")
+		}
+		if err := validateCopies(log.Roots, finding.Copies); err != nil {
+			return err
+		}
+		if _, err := uniqueWinner(finding.Copies, log.ConfiguredMirrors); err == nil || finding.Reason != err.Error() {
+			return fmt.Errorf("invalid unresolved consensus reason for %s", finding.RelPath)
 		}
 	}
 	return nil

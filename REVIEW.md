@@ -113,7 +113,7 @@ Both scans recurse through directories but retain only files or symlinks. Direct
 
 **Resolution (2026-09-05):** Removed the `../` target-prefix restriction and its unused import. Targets remain opaque strings read and published through confined parent descriptors; no target normalization, traversal, or checksum sidecars are introduced. New tests first reproduced the failures and now verify exact replication of ordinary, dot-prefixed, unnormalized, and parent-relative targets, absolute directory targets, dangling links, and self-loops. They cover preview without parent creation, idempotence, untouched external data, target-string disagreement, and source drift before publication. Documentation makes clear that copying a link does not mirror its target data or prevent other programs from following it outside the mirror. The original review probe and `go run ./bin/check.go` pass, including race tests, vet, staticcheck, and module/wrapper checks; existing no-symlink-traversal protections remain unchanged.
 
-### 8. P2 — One unresolved file discards the completed scan and hides subsequent damage
+### 8. [done] P2 — One unresolved file discards the completed scan and hides subsequent damage
 
 **Location:** `internal/repaircopies/repaircopies.go:64-101`; `internal/repaircopies/command.go:57-96`.
 
@@ -124,6 +124,8 @@ Refusing ambiguous repair is correct; throwing away the observations and conflat
 **Evidence:** `TestAuditUnresolvedScanRetainsAllDamage` scanned two unresolved files. Only `a-unresolved` appeared in the error, `z-unresolved` was absent from the report, and the saved status remained `scanning`.
 
 **Recommendation:** Separate scan completion/observations from repairability. Persist and display all unresolved findings while keeping their application fail-closed. Make any log-schema change an explicit hard cutover.
+
+**Resolution (2026-09-05, Admin-approved safe-subset policy):** Log v4 retains every repairable and unresolved finding, with original checksum evidence, refusal reasons, and per-file progress; older versions require a fresh scan. Consensus failures no longer discard the completed scan or prevent confirmation/application of independent safe files. The command syncs each file's start before publication and its completion only after desired-state verification. Operational, output, or checkpoint failures stop later repairs, retain failed/uncertain versus unattempted states, and still attempt directory relocking. Stdout lists all findings and a final per-category count/path summary; unresolved work returns nonzero even after safe repairs succeed. Resume revalidates safe-file state, requires completed entries to remain desired, and reports unresolved historical evidence without rescanning or applying it. New regressions first reproduced the lost mixed scan and now verify one safe repair with two untouched unresolved files, preview, unresolved-only reporting/resume, exact log round trips, schema rejection, durable start-before-publication, failure after publication, checkpoint failures, interrupted resume without duplicate quarantine, completed-file drift, and failed plan output preventing confirmation. The original scan-retention probe and `go run ./bin/check.go` pass, including race tests, vet, staticcheck, and module/wrapper checks. All filesystem tests use disposable directories, not host block devices.
 
 ### 9. P2 — Unmount recovery requires the filesystem to be healthy enough to mount
 
@@ -174,6 +176,8 @@ The preflight inventories disks and mountpoints but never checks availability of
 **Evidence:** `TestAuditRepairDoesNotProceedWithoutDisplayingPlan` made every report write fail. The confirmation callback was still called and the complete repair returned nil.
 
 **Recommendation:** Propagate report and prompt write failures and abort before confirmation/mutation when the plan could not be delivered. Preserve original operational errors if later cleanup/status reporting also fails.
+
+**Partial progress (2026-09-05, during finding 8):** Repair plan/progress/summary writes now propagate errors, and a permanent regression plus the original review probe verify that failed plan output prevents confirmation and mutation. This finding remains open for unchecked terminal prompt writes and the corresponding format/mount paths.
 
 ## Design and maintenance findings
 
