@@ -221,13 +221,15 @@ The image builder is ordinary standard-library repository automation, but lives 
 
 **Resolution (2026-09-05):** Moved the builder to `bin/bake-e2e-image.go`, corrected its source-relative repository root, updated the thin wrapper and wrapper checker, and removed the old command path. A build constraint keeps the standalone main separate from `bin/check.go`; explicit filename checks retain normal/race compilation, vet, and staticcheck coverage. The updated wrapper assertion failed before the move and now passes. Invoking the wrapper from `/tmp` with an invalid argument reaches the expected usage rejection without VM activity. `go run ./bin/check.go` passes. The VM-building sequence is unchanged; no VM was created or image rebuilt for this placement-only change.
 
-### 17. P3 — The only backlog item is already implemented
+### 17. [done] P3 — The only backlog item is already implemented
 
 **Location:** `BACKLOG.md:1`; `internal/repaircopies/repaircopies.go:68-80`; `internal/repaircopies/repaircopies_test.go:16-47`.
 
 The backlog says repair sections show disks in random order. `BuildLog` already sorts paths and each repair's copies by root; log validation enforces sorted unique roots, and the existing test verifies sorted output inputs. Keeping the item suggests work remains that has already been completed.
 
 **Recommendation:** Remove the obsolete item or replace it with a specific remaining presentation defect if one is observed. No random-order defect was found in the current repair path.
+
+**Resolution (2026-09-05):** Removed the stale item and its now-empty `BACKLOG.md` file. Rechecked that `PrintRepairs` validates the log and preserves its sorted copy order for both repairable and unresolved sections. The existing `TestBuildLogChoosesUniqueMajorityAndSorts` passes with caching disabled. No application code or behavior changed. All 17 review findings are now marked done.
 
 ## Reproduction artifacts
 

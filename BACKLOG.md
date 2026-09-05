@@ -1,1 +1,0 @@
-- the mirror-repair view that shows damage with y/n prompt for repair, each section should show disks in sorted order, currently they are in random order
