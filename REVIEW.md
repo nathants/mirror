@@ -191,13 +191,15 @@ The preflight inventories disks and mountpoints but never checks availability of
 
 ## Design and maintenance findings
 
-### 14. P3 — Safety-critical inventory schemas and parsing are duplicated
+### 14. [done] P3 — Safety-critical inventory schemas and parsing are duplicated
 
 **Location:** `internal/formatdisk/formatdisk.go:23-65,369-403,529-581`; `internal/mountdisks/inventory.go:16-51,286-333`.
 
 Formatting and mounting maintain separate block-device structs, JSON decoding/flattening, mount representations, and validation helpers. They already differ in canonicalization and empty/invalid mount-tree handling. Fixes to inventory edge cases have to be found and applied twice, while tests mostly generate JSON from each package's own duplicated types rather than exercising common real-output fixtures.
 
 **Recommendation:** Share a small, typed inventory/parser boundary and representative JSON fixtures. Keep format/mount/unmount policies separate; a generic storage orchestration framework would add complexity rather than remove it.
+
+**Resolution (2026-09-05):** Added `internal/inventory` with shared block/mount JSON types, one block-column selection (including PTUUID), strict complete-document decoding, recursive flattening, deterministic ordering, and mountpoint-evidence extraction. Removed the duplicated schemas, parsers, flatteners, and format-only normalization path rather than keeping aliases. Common parsing rejects missing block arrays, empty/malformed mount inventories, noncanonical targets, invalid device paths, and trailing JSON; nested and stacked mounts, duplicate device evidence, null fields, read-only flags, and opaque sources remain visible. Format's disk/holder/occupancy rules and mount/unmount's identity, topology, filesystem, and writable-device policies stay separate. New regressions first reproduced accepted trailing JSON in both commands and mount's discarded nested mounts/accepted empty or noncanonical targets; they now pass. Both command packages and the parser tests consume the same checked-in flat/tree fixtures captured read-only from util-linux 2.42.2, with hardware/UUID identity values sanitized and provenance recorded. Additional literal-JSON tests cover malformed documents and retained conflicts without generating inputs from the schema being tested. Existing state-machine and recovery tests remain passing; the mount fake now includes the host root mount rather than modeling a full inventory as empty when no mirror is mounted. `go run ./bin/check.go` passes, including race tests, vet, staticcheck, and module/wrapper checks. Fixture capture read inventory only; no formatting, mounting, unmounting, or other host storage mutation was performed.
 
 ### 15. P3 — Unified CLI stream injection stops at the copy/repair handlers
 

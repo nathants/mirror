@@ -1,9 +1,7 @@
 package mountdisks
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -15,52 +13,19 @@ import (
 
 	"golang.org/x/sys/unix"
 	"mirror/internal/cancelio"
+	"mirror/internal/inventory"
 )
-
-const lsblkColumns = "PATH,KNAME,PKNAME,MAJ:MIN,SIZE,TYPE,FSTYPE,PTUUID,UUID,PARTUUID,MOUNTPOINTS,MODEL,SERIAL,WWN,RO"
 
 var (
 	wholeDiskPattern = regexp.MustCompile(`^/dev/sd[a-z]+$`)
 	gptUUIDPattern   = regexp.MustCompile(`(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
 )
 
-type blockDevice struct {
-	Path        string        `json:"path"`
-	KernelName  string        `json:"kname"`
-	ParentName  string        `json:"pkname"`
-	MajorMinor  string        `json:"maj:min"`
-	Size        uint64        `json:"size"`
-	Type        string        `json:"type"`
-	Filesystem  string        `json:"fstype"`
-	PTUUID      string        `json:"ptuuid"`
-	UUID        string        `json:"uuid"`
-	PartUUID    string        `json:"partuuid"`
-	Mountpoints []*string     `json:"mountpoints"`
-	Model       string        `json:"model"`
-	Serial      string        `json:"serial"`
-	WWN         string        `json:"wwn"`
-	ReadOnly    bool          `json:"ro"`
-	Children    []blockDevice `json:"children"`
-}
-
-type lsblkDocument struct {
-	BlockDevices []blockDevice `json:"blockdevices"`
-}
-
-type mountRecord struct {
-	Source string `json:"source"`
-	Target string `json:"target"`
-}
-
-type findmntDocument struct {
-	Filesystems []mountRecord `json:"filesystems"`
-}
-
 type diskPlan struct {
 	ConfigID      string
-	Disk          blockDevice
-	Partition     blockDevice
-	Mapper        *blockDevice
+	Disk          inventory.BlockDevice
+	Partition     inventory.BlockDevice
+	Mapper        *inventory.BlockDevice
 	CryptName     string
 	MapperPath    string
 	Mountpoint    string
@@ -195,16 +160,13 @@ func inspectPlans(ctx context.Context, system System, identifiers []string, home
 		return nil, nil, err
 	}
 
-	byPath := make(map[string]blockDevice, len(devices))
-	children := make(map[string][]blockDevice)
+	seenPaths := make(map[string]struct{}, len(devices))
+	children := make(map[string][]inventory.BlockDevice)
 	for _, device := range devices {
-		if device.Path == "" {
-			return nil, nil, errors.New("lsblk returned a device without a path")
-		}
-		if _, exists := byPath[device.Path]; exists {
+		if _, exists := seenPaths[device.Path]; exists {
 			return nil, nil, fmt.Errorf("lsblk returned a device path more than once: %s", device.Path)
 		}
-		byPath[device.Path] = device
+		seenPaths[device.Path] = struct{}{}
 		if device.ParentName != "" {
 			children[device.ParentName] = append(children[device.ParentName], device)
 		}
@@ -213,7 +175,7 @@ func inspectPlans(ctx context.Context, system System, identifiers []string, home
 	var plans []diskPlan
 	var missing []string
 	for _, identifier := range identifiers {
-		var matches []blockDevice
+		var matches []inventory.BlockDevice
 		for _, device := range devices {
 			if device.Type == "disk" && strings.EqualFold(device.PTUUID, identifier) {
 				matches = append(matches, device)
@@ -233,7 +195,7 @@ func inspectPlans(ctx context.Context, system System, identifiers []string, home
 		if disk.Serial == "" && disk.WWN == "" {
 			return nil, nil, fmt.Errorf("configured disk has neither a serial nor a WWN: %s", disk.Path)
 		}
-		if disk.Filesystem != "" || len(deviceMountpoints(disk)) != 0 {
+		if disk.Filesystem != "" || len(disk.ActiveMountpoints()) != 0 {
 			return nil, nil, fmt.Errorf("configured whole disk has an unexpected filesystem or mount: %s", disk.Path)
 		}
 
@@ -245,7 +207,7 @@ func inspectPlans(ctx context.Context, system System, identifiers []string, home
 		if !strings.EqualFold(partition.Filesystem, "crypto_LUKS") {
 			return nil, nil, fmt.Errorf("configured partition is not a LUKS container: %s has type %q", partition.Path, partition.Filesystem)
 		}
-		if len(deviceMountpoints(partition)) != 0 {
+		if len(partition.ActiveMountpoints()) != 0 {
 			return nil, nil, fmt.Errorf("configured LUKS partition is mounted directly: %s", partition.Path)
 		}
 
@@ -258,7 +220,7 @@ func inspectPlans(ctx context.Context, system System, identifiers []string, home
 			}
 		}
 		partitionChildren := children[partition.Path]
-		var mapper *blockDevice
+		var mapper *inventory.BlockDevice
 		for index := range partitionChildren {
 			candidate := partitionChildren[index]
 			if candidate.Path != mapperPath || candidate.Type != "crypt" {
@@ -291,8 +253,7 @@ func inspectPlans(ctx context.Context, system System, identifiers []string, home
 			if len(children[mapperPath]) != 0 {
 				return nil, nil, fmt.Errorf("mapper has unexpected active holders: %s", mapperPath)
 			}
-			mapperMounts := deviceMountpoints(*mapper)
-			sort.Strings(mapperMounts)
+			mapperMounts := mapper.ActiveMountpoints()
 			if len(mapperMounts) > 1 || (len(mapperMounts) == 1 && mapperMounts[0] != mountpoint) {
 				return nil, nil, fmt.Errorf("mapper is mounted somewhere unexpected: %s at %v", mapperPath, mapperMounts)
 			}
@@ -337,41 +298,12 @@ func requireMountable(plans []diskPlan) error {
 	return nil
 }
 
-func deviceMountpoints(device blockDevice) []string {
-	var mountpoints []string
-	for _, value := range device.Mountpoints {
-		if value != nil && *value != "" {
-			mountpoints = append(mountpoints, *value)
-		}
-	}
-	return mountpoints
-}
-
-func listBlockDevices(ctx context.Context, system System) ([]blockDevice, error) {
-	output, err := system.Output(ctx, "lsblk", "--json", "--bytes", "--paths", "--output", lsblkColumns)
+func listBlockDevices(ctx context.Context, system System) ([]inventory.BlockDevice, error) {
+	output, err := system.Output(ctx, "lsblk", "--json", "--bytes", "--paths", "--output", inventory.BlockColumns)
 	if err != nil {
 		return nil, fmt.Errorf("list block devices: %w", err)
 	}
-	var document lsblkDocument
-	decoder := json.NewDecoder(bytes.NewReader(output))
-	if err := decoder.Decode(&document); err != nil {
-		return nil, fmt.Errorf("decode lsblk JSON: %w", err)
-	}
-	var flattened []blockDevice
-	for _, device := range document.BlockDevices {
-		flattened = appendFlattened(flattened, device)
-	}
-	return flattened, nil
-}
-
-func appendFlattened(destination []blockDevice, device blockDevice) []blockDevice {
-	children := device.Children
-	device.Children = nil
-	destination = append(destination, device)
-	for _, child := range children {
-		destination = appendFlattened(destination, child)
-	}
-	return destination
+	return inventory.ParseBlocks(output)
 }
 
 func listMounts(ctx context.Context, system System) (map[string][]string, error) {
@@ -379,19 +311,16 @@ func listMounts(ctx context.Context, system System) (map[string][]string, error)
 	if err != nil {
 		return nil, fmt.Errorf("list mounted filesystems: %w", err)
 	}
-	var document findmntDocument
-	if err := json.Unmarshal(output, &document); err != nil {
-		return nil, fmt.Errorf("decode findmnt JSON: %w", err)
+	records, err := inventory.ParseMounts(output)
+	if err != nil {
+		return nil, err
 	}
 	mounts := make(map[string][]string)
-	for _, record := range document.Filesystems {
-		if record.Target == "" {
-			continue
+	for _, record := range records {
+		if record.Source == "" {
+			return nil, fmt.Errorf("findmnt returned no source for %s", record.Target)
 		}
-		if !filepath.IsAbs(record.Target) {
-			return nil, fmt.Errorf("findmnt returned a non-absolute target: %q", record.Target)
-		}
-		mounts[filepath.Clean(record.Target)] = append(mounts[filepath.Clean(record.Target)], record.Source)
+		mounts[record.Target] = append(mounts[record.Target], record.Source)
 	}
 	return mounts, nil
 }

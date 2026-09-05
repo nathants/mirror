@@ -1,0 +1,59 @@
+{
+  "blockdevices": [
+    {
+      "path": "/dev/sde",
+      "kname": "/dev/sde",
+      "pkname": null,
+      "maj:min": "8:64",
+      "size": 4000787030016,
+      "type": "disk",
+      "fstype": null,
+      "ptuuid": "11111111-1111-4111-8111-111111111111",
+      "uuid": null,
+      "partuuid": null,
+      "mountpoints": [],
+      "model": "Fixture Disk",
+      "serial": "FIXTURE-SERIAL",
+      "wwn": "0x5000000000000001",
+      "ro": false,
+      "children": [
+        {
+          "path": "/dev/sde1",
+          "kname": "/dev/sde1",
+          "pkname": "/dev/sde",
+          "maj:min": "8:65",
+          "size": 4000785104896,
+          "type": "part",
+          "fstype": "crypto_LUKS",
+          "ptuuid": "11111111-1111-4111-8111-111111111111",
+          "uuid": "22222222-2222-4222-8222-222222222222",
+          "partuuid": "33333333-3333-4333-8333-333333333333",
+          "mountpoints": [],
+          "model": null,
+          "serial": null,
+          "wwn": "0x5000000000000001",
+          "ro": false,
+          "children": [
+            {
+              "path": "/dev/mapper/sde",
+              "kname": "/dev/dm-0",
+              "pkname": "/dev/sde1",
+              "maj:min": "254:0",
+              "size": 4000768327680,
+              "type": "crypt",
+              "fstype": "ext4",
+              "ptuuid": null,
+              "uuid": "44444444-4444-4444-8444-444444444444",
+              "partuuid": null,
+              "mountpoints": [],
+              "model": null,
+              "serial": null,
+              "wwn": null,
+              "ro": false
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

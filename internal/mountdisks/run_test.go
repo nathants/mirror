@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"mirror/internal/inventory"
 )
 
 type recordedCall struct {
@@ -54,7 +56,7 @@ func (f *fakeSystem) Output(_ context.Context, name string, args ...string) ([]b
 	})
 	switch name {
 	case "lsblk":
-		partition := blockDevice{
+		partition := inventory.BlockDevice{
 			Path:       f.diskPath + "1",
 			KernelName: f.diskPath + "1",
 			ParentName: f.diskPath,
@@ -66,7 +68,7 @@ func (f *fakeSystem) Output(_ context.Context, name string, args ...string) ([]b
 			PartUUID:   "partition-id",
 		}
 		if f.mapperOpen {
-			mapper := blockDevice{
+			mapper := inventory.BlockDevice{
 				Path:        f.mapperPath,
 				KernelName:  "/dev/dm-0",
 				ParentName:  partition.Path,
@@ -80,9 +82,9 @@ func (f *fakeSystem) Output(_ context.Context, name string, args ...string) ([]b
 				mountpoint := f.mountpoint
 				mapper.Mountpoints = []*string{&mountpoint}
 			}
-			partition.Children = []blockDevice{mapper}
+			partition.Children = []inventory.BlockDevice{mapper}
 		}
-		root := blockDevice{
+		root := inventory.BlockDevice{
 			Path:       f.diskPath,
 			KernelName: f.diskPath,
 			MajorMinor: "8:64",
@@ -92,25 +94,25 @@ func (f *fakeSystem) Output(_ context.Context, name string, args ...string) ([]b
 			Model:      "ST4000DM004",
 			Serial:     "ZFNTEST",
 			WWN:        "0x5000test",
-			Children:   []blockDevice{partition},
+			Children:   []inventory.BlockDevice{partition},
 		}
-		return json.Marshal(lsblkDocument{BlockDevices: []blockDevice{root}})
+		return json.Marshal(inventory.BlockDocument{BlockDevices: []inventory.BlockDevice{root}})
 	case "blkid":
 		return []byte(f.filesystem + "\n"), nil
 	case "findmnt":
 		if hasArgument(args, "--list") {
-			var filesystems []mountRecord
+			filesystems := []inventory.Mount{{Source: "rootfs", Target: "/"}}
 			if f.mounted || f.wrongMountSource {
 				source := f.mapperPath
 				if f.wrongMountSource {
 					source = "/dev/mapper/wrong"
 				}
-				filesystems = append(filesystems, mountRecord{Source: source, Target: f.mountpoint})
+				filesystems = append(filesystems, inventory.Mount{Source: source, Target: f.mountpoint})
 			}
 			if f.nestedMountpoint {
-				filesystems = append(filesystems, mountRecord{Source: "/dev/mapper/nested", Target: filepath.Join(f.mountpoint, "nested")})
+				filesystems = append(filesystems, inventory.Mount{Source: "/dev/mapper/nested", Target: filepath.Join(f.mountpoint, "nested")})
 			}
-			return json.Marshal(findmntDocument{Filesystems: filesystems})
+			return json.Marshal(inventory.MountDocument{Filesystems: filesystems})
 		}
 		if hasArgument(args, "--target") && f.mounted {
 			return []byte(f.mapperPath + "\n"), nil

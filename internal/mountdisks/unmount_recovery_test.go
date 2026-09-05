@@ -8,13 +8,15 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"mirror/internal/inventory"
 )
 
 // Alter only injected inventory, never host devices or the production parser.
 type recoverySystem struct {
 	*fakeSystem
 	inventories int
-	alter       func(int, *blockDevice)
+	alter       func(int, *inventory.BlockDevice)
 }
 
 func (s *recoverySystem) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
@@ -22,7 +24,7 @@ func (s *recoverySystem) Output(ctx context.Context, name string, args ...string
 	if err != nil || name != "lsblk" {
 		return data, err
 	}
-	var document lsblkDocument
+	var document inventory.BlockDocument
 	if err := json.Unmarshal(data, &document); err != nil {
 		return nil, err
 	}
@@ -34,13 +36,13 @@ func (s *recoverySystem) Output(ctx context.Context, name string, args ...string
 func TestUnmountDoesNotRequireMountableFilesystem(t *testing.T) {
 	for _, test := range []struct {
 		name  string
-		alter func(*blockDevice)
+		alter func(*inventory.BlockDevice)
 	}{
-		{"unknown filesystem", func(d *blockDevice) { d.Children[0].Children[0].Filesystem = "" }},
-		{"non-ext4 filesystem", func(d *blockDevice) { d.Children[0].Children[0].Filesystem = "xfs" }},
-		{"read-only disk", func(d *blockDevice) { d.ReadOnly = true }},
-		{"read-only partition", func(d *blockDevice) { d.Children[0].ReadOnly = true }},
-		{"read-only mapper", func(d *blockDevice) { d.Children[0].Children[0].ReadOnly = true }},
+		{"unknown filesystem", func(d *inventory.BlockDevice) { d.Children[0].Children[0].Filesystem = "" }},
+		{"non-ext4 filesystem", func(d *inventory.BlockDevice) { d.Children[0].Children[0].Filesystem = "xfs" }},
+		{"read-only disk", func(d *inventory.BlockDevice) { d.ReadOnly = true }},
+		{"read-only partition", func(d *inventory.BlockDevice) { d.Children[0].ReadOnly = true }},
+		{"read-only mapper", func(d *inventory.BlockDevice) { d.Children[0].Children[0].ReadOnly = true }},
 	} {
 		for _, mounted := range []bool{false, true} {
 			name := test.name + "/open only"
@@ -50,7 +52,7 @@ func TestUnmountDoesNotRequireMountableFilesystem(t *testing.T) {
 			t.Run(name, func(t *testing.T) {
 				base := newFakeSystem()
 				base.mapperOpen, base.mounted, base.mountpointExists = true, mounted, mounted
-				system := &recoverySystem{fakeSystem: base, alter: func(_ int, disk *blockDevice) { test.alter(disk) }}
+				system := &recoverySystem{fakeSystem: base, alter: func(_ int, disk *inventory.BlockDevice) { test.alter(disk) }}
 				option := options(t, func() ([]byte, error) { t.Fatal("recovery requested password"); return nil, nil }, base.identifier)
 				// Relaxing recovery must not admit unhealthy roots for mounting,
 				// copying, repair, or directory guards.
@@ -90,16 +92,16 @@ func TestUnmountDoesNotRequireMountableFilesystem(t *testing.T) {
 func TestUnmountRecoveryRetainsIdentityAndTopologyChecks(t *testing.T) {
 	for _, test := range []struct {
 		name  string
-		alter func(*blockDevice)
+		alter func(*inventory.BlockDevice)
 	}{
-		{"missing hardware identity", func(d *blockDevice) { d.Serial, d.WWN = "", "" }},
-		{"wrong partition type", func(d *blockDevice) { d.Children[0].Filesystem = "ext4" }},
-		{"unexpected mapper", func(d *blockDevice) { d.Children[0].Children[0].Path = "/dev/mapper/other" }},
-		{"unexpected holder", func(d *blockDevice) {
+		{"missing hardware identity", func(d *inventory.BlockDevice) { d.Serial, d.WWN = "", "" }},
+		{"wrong partition type", func(d *inventory.BlockDevice) { d.Children[0].Filesystem = "ext4" }},
+		{"unexpected mapper", func(d *inventory.BlockDevice) { d.Children[0].Children[0].Path = "/dev/mapper/other" }},
+		{"unexpected holder", func(d *inventory.BlockDevice) {
 			m := &d.Children[0].Children[0]
-			m.Children = []blockDevice{{Path: "/dev/dm-2", ParentName: m.Path, Type: "lvm"}}
+			m.Children = []inventory.BlockDevice{{Path: "/dev/dm-2", ParentName: m.Path, Type: "lvm"}}
 		}},
-		{"unexpected mount", func(d *blockDevice) {
+		{"unexpected mount", func(d *inventory.BlockDevice) {
 			target := "/elsewhere"
 			d.Children[0].Children[0].Mountpoints = []*string{&target}
 		}},
@@ -107,7 +109,7 @@ func TestUnmountRecoveryRetainsIdentityAndTopologyChecks(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			base := newFakeSystem()
 			base.mapperOpen = true
-			system := &recoverySystem{fakeSystem: base, alter: func(_ int, disk *blockDevice) {
+			system := &recoverySystem{fakeSystem: base, alter: func(_ int, disk *inventory.BlockDevice) {
 				disk.ReadOnly = true
 				disk.Children[0].Children[0].Filesystem = ""
 				test.alter(disk)
@@ -125,7 +127,7 @@ func TestUnmountRecoveryRetainsIdentityAndTopologyChecks(t *testing.T) {
 func TestUnmountRecoveryRevalidatesAfterConfirmation(t *testing.T) {
 	base := newFakeSystem()
 	base.mapperOpen = true
-	system := &recoverySystem{fakeSystem: base, alter: func(n int, disk *blockDevice) {
+	system := &recoverySystem{fakeSystem: base, alter: func(n int, disk *inventory.BlockDevice) {
 		disk.Children[0].Children[0].Filesystem = ""
 		if n == 2 {
 			disk.Serial = "changed identity"

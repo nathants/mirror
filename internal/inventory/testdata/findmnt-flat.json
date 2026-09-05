@@ -1,0 +1,24 @@
+{
+  "filesystems": [
+    {
+      "source": "none",
+      "target": "/dev"
+    },
+    {
+      "source": "devpts",
+      "target": "/dev/pts"
+    },
+    {
+      "source": "none",
+      "target": "/dev/shm"
+    },
+    {
+      "source": "hugetlbfs",
+      "target": "/dev/hugepages"
+    },
+    {
+      "source": "mqueue",
+      "target": "/dev/mqueue"
+    }
+  ]
+}

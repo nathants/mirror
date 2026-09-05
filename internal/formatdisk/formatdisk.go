@@ -1,9 +1,7 @@
 package formatdisk
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -11,15 +9,13 @@ import (
 	"path/filepath"
 	"reflect"
 	"regexp"
-	"sort"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	"mirror/internal/inventory"
 	"mirror/internal/terminal"
 )
-
-const lsblkColumns = "PATH,KNAME,PKNAME,MAJ:MIN,SIZE,TYPE,FSTYPE,UUID,PARTUUID,MOUNTPOINTS,MODEL,SERIAL,WWN,RO"
 
 var (
 	productionDevicePattern = regexp.MustCompile(`^/dev/sd[a-z]+$`)
@@ -34,37 +30,6 @@ type Options struct {
 	AllowNonSCSIBlockForTesting bool
 	PartitionPollAttempts       int
 	PartitionPollInterval       time.Duration
-}
-
-type blockDevice struct {
-	Path        string        `json:"path"`
-	KernelName  string        `json:"kname"`
-	ParentName  string        `json:"pkname"`
-	MajorMinor  string        `json:"maj:min"`
-	Size        uint64        `json:"size"`
-	Type        string        `json:"type"`
-	Filesystem  string        `json:"fstype"`
-	UUID        string        `json:"uuid"`
-	PartUUID    string        `json:"partuuid"`
-	Mountpoints []*string     `json:"mountpoints"`
-	Model       string        `json:"model"`
-	Serial      string        `json:"serial"`
-	WWN         string        `json:"wwn"`
-	ReadOnly    bool          `json:"ro"`
-	Children    []blockDevice `json:"children"`
-}
-
-type lsblkDocument struct {
-	BlockDevices []blockDevice `json:"blockdevices"`
-}
-
-type mountRecord struct {
-	Target   string        `json:"target"`
-	Children []mountRecord `json:"children"`
-}
-
-type findmntDocument struct {
-	Filesystems []mountRecord `json:"filesystems"`
 }
 
 type app struct {
@@ -195,7 +160,7 @@ func (a *app) run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("revalidate selected device: %w", err)
 	}
-	if !reflect.DeepEqual(normalizeDevices(before), normalizeDevices(after)) {
+	if !reflect.DeepEqual(before, after) {
 		return fmt.Errorf("device identity or state changed while awaiting confirmation: %s", device)
 	}
 	if err := a.assertMountpointSafe(ctx, mountpoint); err != nil {
@@ -306,7 +271,7 @@ func (a *app) run(ctx context.Context) error {
 
 var ErrDeclined = errors.New("format declined")
 
-func (a *app) listDisks(ctx context.Context) ([]blockDevice, error) {
+func (a *app) listDisks(ctx context.Context) ([]inventory.BlockDevice, error) {
 	devices, err := a.lsblk(ctx, true)
 	if err != nil {
 		return nil, fmt.Errorf("list block devices: %w", err)
@@ -317,13 +282,10 @@ func (a *app) listDisks(ctx context.Context) ([]blockDevice, error) {
 			eligible = append(eligible, device)
 		}
 	}
-	sort.Slice(eligible, func(i, j int) bool {
-		return eligible[i].Path < eligible[j].Path
-	})
 	return eligible, nil
 }
 
-func (a *app) inspectSafeDevice(ctx context.Context, path string) ([]blockDevice, error) {
+func (a *app) inspectSafeDevice(ctx context.Context, path string) ([]inventory.BlockDevice, error) {
 	if !a.devicePathAllowed(path) {
 		return nil, fmt.Errorf("only a whole /dev/sdX disk is supported, got: %s", path)
 	}
@@ -331,8 +293,7 @@ func (a *app) inspectSafeDevice(ctx context.Context, path string) ([]blockDevice
 	if err != nil {
 		return nil, fmt.Errorf("inspect %s: %w", path, err)
 	}
-	devices = normalizeDevices(devices)
-	var root *blockDevice
+	var root *inventory.BlockDevice
 	for index := range devices {
 		if devices[index].Path == path {
 			if root != nil {
@@ -354,10 +315,8 @@ func (a *app) inspectSafeDevice(ctx context.Context, path string) ([]blockDevice
 		return nil, fmt.Errorf("device has neither a serial nor a WWN: %s", path)
 	}
 	for _, device := range devices {
-		for _, mountpoint := range device.Mountpoints {
-			if mountpoint != nil && *mountpoint != "" {
-				return nil, fmt.Errorf("device or one of its children is mounted at %s: %s", *mountpoint, path)
-			}
+		if mountpoint := firstMountpoint(device); mountpoint != "" {
+			return nil, fmt.Errorf("device or one of its children is mounted at %s: %s", mountpoint, path)
 		}
 		if strings.EqualFold(device.Filesystem, "swap") {
 			return nil, fmt.Errorf("device contains swap: %s", path)
@@ -369,12 +328,12 @@ func (a *app) inspectSafeDevice(ctx context.Context, path string) ([]blockDevice
 	return devices, nil
 }
 
-func (a *app) lsblk(ctx context.Context, nodeps bool, paths ...string) ([]blockDevice, error) {
+func (a *app) lsblk(ctx context.Context, nodeps bool, paths ...string) ([]inventory.BlockDevice, error) {
 	args := []string{"--json", "--bytes", "--paths"}
 	if nodeps {
 		args = append(args, "--nodeps")
 	}
-	args = append(args, "--output", lsblkColumns)
+	args = append(args, "--output", inventory.BlockColumns)
 	if len(paths) > 0 {
 		args = append(args, "--")
 		args = append(args, paths...)
@@ -383,48 +342,7 @@ func (a *app) lsblk(ctx context.Context, nodeps bool, paths ...string) ([]blockD
 	if err != nil {
 		return nil, err
 	}
-	var document lsblkDocument
-	decoder := json.NewDecoder(bytes.NewReader(output))
-	if err := decoder.Decode(&document); err != nil {
-		return nil, fmt.Errorf("decode lsblk JSON: %w", err)
-	}
-	var flattened []blockDevice
-	for _, device := range document.BlockDevices {
-		flattened = appendFlattened(flattened, device)
-	}
-	return flattened, nil
-}
-
-func appendFlattened(destination []blockDevice, device blockDevice) []blockDevice {
-	children := device.Children
-	device.Children = nil
-	destination = append(destination, device)
-	for _, child := range children {
-		destination = appendFlattened(destination, child)
-	}
-	return destination
-}
-
-func normalizeDevices(devices []blockDevice) []blockDevice {
-	normalized := append([]blockDevice(nil), devices...)
-	for index := range normalized {
-		normalized[index].Children = nil
-		sort.Slice(normalized[index].Mountpoints, func(i, j int) bool {
-			left := ""
-			right := ""
-			if normalized[index].Mountpoints[i] != nil {
-				left = *normalized[index].Mountpoints[i]
-			}
-			if normalized[index].Mountpoints[j] != nil {
-				right = *normalized[index].Mountpoints[j]
-			}
-			return left < right
-		})
-	}
-	sort.Slice(normalized, func(i, j int) bool {
-		return normalized[i].Path < normalized[j].Path
-	})
-	return normalized
+	return inventory.ParseBlocks(output)
 }
 
 type diskIdentity struct {
@@ -439,16 +357,15 @@ type diskIdentity struct {
 	ReadOnly   bool
 }
 
-func firstMountpoint(device blockDevice) string {
-	for _, mountpoint := range device.Mountpoints {
-		if mountpoint != nil && *mountpoint != "" {
-			return *mountpoint
-		}
+func firstMountpoint(device inventory.BlockDevice) string {
+	mountpoints := device.ActiveMountpoints()
+	if len(mountpoints) != 0 {
+		return mountpoints[0]
 	}
 	return ""
 }
 
-func identityOf(device blockDevice) diskIdentity {
+func identityOf(device inventory.BlockDevice) diskIdentity {
 	return diskIdentity{
 		Path:       device.Path,
 		KernelName: device.KernelName,
@@ -462,13 +379,13 @@ func identityOf(device blockDevice) diskIdentity {
 	}
 }
 
-func findDevice(devices []blockDevice, path string) (blockDevice, bool) {
+func findDevice(devices []inventory.BlockDevice, path string) (inventory.BlockDevice, bool) {
 	for _, device := range devices {
 		if device.Path == path {
 			return device, true
 		}
 	}
-	return blockDevice{}, false
+	return inventory.BlockDevice{}, false
 }
 
 func (a *app) waitForSinglePartition(ctx context.Context, device string, expectedIdentity diskIdentity) (string, error) {
@@ -479,7 +396,6 @@ func (a *app) waitForSinglePartition(ctx context.Context, device string, expecte
 	for attempt := 0; attempt < a.option.PartitionPollAttempts; attempt++ {
 		devices, err := a.lsblk(ctx, false, device)
 		if err == nil {
-			devices = normalizeDevices(devices)
 			root, found := findDevice(devices, device)
 			if !found {
 				return "", fmt.Errorf("selected disk disappeared after partitioning: %s", device)
@@ -490,7 +406,7 @@ func (a *app) waitForSinglePartition(ctx context.Context, device string, expecte
 			if mountpoint := firstMountpoint(root); mountpoint != "" {
 				return "", fmt.Errorf("selected disk became mounted at %s after partitioning: %s", mountpoint, device)
 			}
-			var partitions []blockDevice
+			var partitions []inventory.BlockDevice
 			unexpectedHolder := ""
 			for _, candidate := range devices {
 				if candidate.Path == device {
@@ -534,19 +450,14 @@ func (a *app) assertMountpointSafe(ctx context.Context, mountpoint string) error
 	if err != nil {
 		return fmt.Errorf("inspect mount tree for %s: %w", mountpoint, err)
 	}
-	var document findmntDocument
-	if err := json.Unmarshal(output, &document); err != nil {
-		return fmt.Errorf("decode findmnt JSON for %s: %w", mountpoint, err)
-	}
-	if len(document.Filesystems) == 0 {
-		return fmt.Errorf("findmnt returned an empty mount tree while inspecting %s", mountpoint)
-	}
-	mountedPath, err := mountAtOrBelow(document.Filesystems, mountpoint)
+	records, err := inventory.ParseMounts(output)
 	if err != nil {
-		return fmt.Errorf("validate mount tree for %s: %w", mountpoint, err)
+		return fmt.Errorf("inspect mount tree for %s: %w", mountpoint, err)
 	}
-	if mountedPath != "" {
-		return fmt.Errorf("something is already mounted at or below %s: %s", mountpoint, mountedPath)
+	for _, record := range records {
+		if record.Target == mountpoint || strings.HasPrefix(record.Target, mountpoint+string(filepath.Separator)) {
+			return fmt.Errorf("something is already mounted at or below %s: %s", mountpoint, record.Target)
+		}
 	}
 
 	info, err := a.system.Lstat(mountpoint)
@@ -567,21 +478,6 @@ func (a *app) assertMountpointSafe(ctx context.Context, mountpoint string) error
 		return fmt.Errorf("mountpoint directory is not empty: %s", mountpoint)
 	}
 	return nil
-}
-
-func mountAtOrBelow(records []mountRecord, root string) (string, error) {
-	for _, record := range records {
-		if !filepath.IsAbs(record.Target) || filepath.Clean(record.Target) != record.Target {
-			return "", fmt.Errorf("findmnt returned an invalid target path %q", record.Target)
-		}
-		if record.Target == root || strings.HasPrefix(record.Target, root+string(filepath.Separator)) {
-			return record.Target, nil
-		}
-		if target, err := mountAtOrBelow(record.Children, root); err != nil || target != "" {
-			return target, err
-		}
-	}
-	return "", nil
 }
 
 func (a *app) assertPathAbsent(path string, message string) error {
@@ -617,7 +513,7 @@ func (a *app) rootTypeAllowed(deviceType string) bool {
 	return deviceType == "disk"
 }
 
-func writeDiskTable(writer io.Writer, devices []blockDevice) error {
+func writeDiskTable(writer io.Writer, devices []inventory.BlockDevice) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
 	if _, err := fmt.Fprintln(table, "PATH\tSIZE\tTYPE\tMODEL\tSERIAL\tWWN"); err != nil {
 		return err

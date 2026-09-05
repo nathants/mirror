@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"mirror/internal/inventory"
 )
 
 type recordedCall struct {
@@ -83,12 +85,12 @@ func (f *fakeSystem) Output(_ context.Context, name string, args ...string) ([]b
 		if f.changeAfterPartition && f.partitioned {
 			root.Serial = "REPLACEMENT"
 		}
-		devices := []blockDevice{root}
+		devices := []inventory.BlockDevice{root}
 		partitionPath := f.devicePath + "1"
 		if f.deviceType == "loop" {
 			partitionPath = f.devicePath + "p1"
 		}
-		partition := blockDevice{
+		partition := inventory.BlockDevice{
 			Path:       partitionPath,
 			KernelName: partitionPath,
 			ParentName: f.devicePath,
@@ -103,7 +105,7 @@ func (f *fakeSystem) Output(_ context.Context, name string, args ...string) ([]b
 		}
 		devices = append(devices, partition)
 		if f.holderType != "" {
-			devices = append(devices, blockDevice{
+			devices = append(devices, inventory.BlockDevice{
 				Path:       "/dev/mapper/holder",
 				KernelName: "/dev/dm-0",
 				ParentName: partitionPath,
@@ -115,12 +117,12 @@ func (f *fakeSystem) Output(_ context.Context, name string, args ...string) ([]b
 		return marshalLSBLK(devices...), nil
 	case "findmnt":
 		if contains(args, "--json") {
-			root := mountRecord{Target: "/"}
+			root := inventory.Mount{Target: "/"}
 			if f.mountpointBusy {
-				root.Children = append(root.Children, mountRecord{Target: f.mountPath})
+				root.Children = append(root.Children, inventory.Mount{Target: f.mountPath})
 			}
 			if f.nestedMountpoint {
-				root.Children = append(root.Children, mountRecord{Target: filepath.Join(f.mountPath, "nested")})
+				root.Children = append(root.Children, inventory.Mount{Target: filepath.Join(f.mountPath, "nested")})
 			}
 			return marshalFindmnt(root), nil
 		}
@@ -238,8 +240,8 @@ func (f *fakeSystem) Sleep(context.Context, time.Duration) error {
 	return nil
 }
 
-func (f *fakeSystem) rootDevice() blockDevice {
-	return blockDevice{
+func (f *fakeSystem) rootDevice() inventory.BlockDevice {
+	return inventory.BlockDevice{
 		Path:       f.devicePath,
 		KernelName: f.devicePath,
 		MajorMinor: "8:240",
@@ -273,16 +275,16 @@ func (fakeFileInfo) ModTime() time.Time  { return time.Time{} }
 func (f fakeFileInfo) IsDir() bool       { return f.mode.IsDir() }
 func (fakeFileInfo) Sys() any            { return nil }
 
-func marshalLSBLK(devices ...blockDevice) []byte {
-	data, err := json.Marshal(lsblkDocument{BlockDevices: devices})
+func marshalLSBLK(devices ...inventory.BlockDevice) []byte {
+	data, err := json.Marshal(inventory.BlockDocument{BlockDevices: devices})
 	if err != nil {
 		panic(err)
 	}
 	return data
 }
 
-func marshalFindmnt(filesystems ...mountRecord) []byte {
-	data, err := json.Marshal(findmntDocument{Filesystems: filesystems})
+func marshalFindmnt(filesystems ...inventory.Mount) []byte {
+	data, err := json.Marshal(inventory.MountDocument{Filesystems: filesystems})
 	if err != nil {
 		panic(err)
 	}
