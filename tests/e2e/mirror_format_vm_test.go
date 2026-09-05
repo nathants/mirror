@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"mirror/internal/system"
 )
 
 func TestMirrorFormatVM(t *testing.T) {
@@ -138,65 +140,71 @@ func runInteractive(t *testing.T, directory string, name string, interactions []
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
 	defer cancel()
+	output, err := interactiveOutput(ctx, directory, name, interactions, args...)
+	if err != nil {
+		t.Fatalf("%s %v failed: %v\n%s", name, args, err, output)
+	}
+	return output
+}
 
-	command := exec.CommandContext(ctx, name, args...)
+func interactiveOutput(ctx context.Context, directory, name string, interactions []interaction, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	input, answers, err := os.Pipe()
+	if err != nil {
+		return nil, err
+	}
+	defer input.Close()
+	defer answers.Close()
+	closed := make(chan struct{})
+	stop := context.AfterFunc(ctx, func() {
+		_ = answers.Close() // unblock a response write if the command stops reading
+		close(closed)
+	})
+	defer func() {
+		if !stop() {
+			<-closed
+		}
+	}()
+	output := &interactionOutput{answers: answers, interactions: interactions, cancel: cancel}
+	command := exec.Command(name, args...)
 	command.Dir = directory
-	stdin, err := command.StdinPipe()
-	if err != nil {
-		t.Fatalf("create %s stdin pipe: %v", name, err)
+	command.Stdin = input
+	// The same Writer makes os/exec serialize both streams through one copier.
+	// RunCommand owns Wait and bounds pipe draining even before the next prompt.
+	command.Stdout, command.Stderr = output, output
+	err = system.RunCommand(ctx, command)
+	if err == nil && output.next != len(interactions) {
+		err = fmt.Errorf("command ended before prompt %q", interactions[output.next].prompt)
 	}
-	outputReader, outputWriter, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("create %s output pipe: %v", name, err)
-	}
-	defer outputReader.Close()
-	command.Stdout = outputWriter
-	command.Stderr = outputWriter
-	if err := command.Start(); err != nil {
-		outputWriter.Close()
-		t.Fatalf("start %s %v: %v", name, args, err)
-	}
-	if err := outputWriter.Close(); err != nil {
-		t.Fatalf("close parent copy of %s output pipe: %v", name, err)
-	}
+	return output.buffer.Bytes(), err
+}
 
-	var output bytes.Buffer
-	buffer := make([]byte, 4096)
-	searchFrom := 0
-	for _, exchange := range interactions {
-		for !bytes.Contains(output.Bytes()[searchFrom:], []byte(exchange.prompt)) {
-			count, readErr := outputReader.Read(buffer)
-			if count > 0 {
-				_, _ = output.Write(buffer[:count])
-			}
-			if readErr != nil {
-				_ = stdin.Close()
-				waitErr := command.Wait()
-				t.Fatalf("%s %v ended before prompt %q: read output: %v; wait: %v\n%s", name, args, exchange.prompt, readErr, waitErr, output.Bytes())
-			}
-		}
-		match := bytes.Index(output.Bytes()[searchFrom:], []byte(exchange.prompt))
-		searchFrom += match + len(exchange.prompt)
-		if _, err := io.WriteString(stdin, exchange.response+"\n"); err != nil {
-			_ = stdin.Close()
-			_ = command.Wait()
-			t.Fatalf("answer prompt %q from %s %v: %v\n%s", exchange.prompt, name, args, err, output.Bytes())
-		}
-	}
+type interactionOutput struct {
+	buffer       bytes.Buffer
+	answers      *os.File
+	interactions []interaction
+	cancel       context.CancelFunc
+	next         int
+	searchFrom   int
+}
 
-	_, readErr := io.Copy(&output, outputReader)
-	closeErr := stdin.Close()
-	waitErr := command.Wait()
-	if readErr != nil {
-		t.Fatalf("read %s %v output: %v\n%s", name, args, readErr, output.Bytes())
+func (out *interactionOutput) Write(data []byte) (int, error) {
+	n, _ := out.buffer.Write(data)
+	for out.next < len(out.interactions) {
+		exchange := out.interactions[out.next]
+		match := bytes.Index(out.buffer.Bytes()[out.searchFrom:], []byte(exchange.prompt))
+		if match < 0 {
+			break
+		}
+		out.searchFrom += match + len(exchange.prompt)
+		if _, err := io.WriteString(out.answers, exchange.response+"\n"); err != nil {
+			out.cancel()
+			return n, fmt.Errorf("answer prompt %q: %w", exchange.prompt, err)
+		}
+		out.next++
 	}
-	if closeErr != nil {
-		t.Fatalf("close %s %v stdin: %v\n%s", name, args, closeErr, output.Bytes())
-	}
-	if waitErr != nil {
-		t.Fatalf("%s %v failed: %v\n%s", name, args, waitErr, output.Bytes())
-	}
-	return output.Bytes()
+	return n, nil
 }
 
 func run(t *testing.T, directory string, environment []string, stdin io.Reader, name string, args ...string) []byte {
@@ -211,13 +219,16 @@ func run(t *testing.T, directory string, environment []string, stdin io.Reader, 
 }
 
 func commandOutput(ctx context.Context, directory string, environment []string, stdin io.Reader, name string, args ...string) ([]byte, error) {
-	command := exec.CommandContext(ctx, name, args...)
+	command := exec.Command(name, args...)
 	command.Dir = directory
 	if environment != nil {
 		command.Env = environment
 	}
 	command.Stdin = stdin
-	return command.CombinedOutput()
+	var output bytes.Buffer
+	command.Stdout, command.Stderr = &output, &output
+	err := system.RunCommand(ctx, command)
+	return output.Bytes(), err
 }
 
 func overrideEnvironment(overrides map[string]string) []string {

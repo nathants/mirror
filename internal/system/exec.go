@@ -15,13 +15,13 @@ import (
 type Exec struct{}
 
 func (Exec) Output(ctx context.Context, name string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.Command(name, args...)
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	if err := RunCommand(ctx, cmd); err != nil {
 		return nil, commandError(name, args, stderr.String(), err)
 	}
 	return stdout.Bytes(), nil
@@ -35,12 +35,12 @@ func (Exec) Run(
 	name string,
 	args ...string,
 ) error {
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.Command(name, args...)
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
+	if err := RunCommand(ctx, cmd); err != nil {
 		return commandError(name, args, "", err)
 	}
 	return nil
@@ -104,7 +104,7 @@ func (e *commandFailure) ExitCode() int {
 }
 
 func commandError(name string, args []string, stderr string, err error) error {
-	message := fmt.Sprintf("%s %q failed", name, args)
+	message := fmt.Sprintf("%s %q failed: %v", name, args, err)
 	if stderr != "" {
 		message += ": " + stderr
 	}
