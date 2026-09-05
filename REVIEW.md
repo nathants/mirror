@@ -47,7 +47,7 @@ Cleanup retains root path strings, not the identities/descriptors of the directo
 
 **Resolution (2026-09-04):** Copy/repair workflows now own a `DirectoryGuard` with retained root descriptors until relock and close. Cleanup walks only the originally opened filesystems and chmods opened directory descriptors, while normal lock/unlock revalidates every root before mutation. The path-only `LockRoots` and reopening `ChmodDir` paths were removed. `TestRepairCleanupRelocksOriginalRootNotReplacement` first reproduced both wrong replacement modes and original directories left unlocked; it now verifies originals are `0544`, replacements remain `0700`, data is unchanged, and the log remains pending. Additional guard/rootfs tests cover absent paths, symlink replacements, ancestor redirection during traversal, newly created directories, partial-unlock cancellation, private-namespace exclusion, and full-root preflight. `go run ./bin/check.go` passes, including race tests. These tests use disposable directories, not real host mounts.
 
-### 3. P1 — Failed or cancelled storage commands are assumed to have made no changes
+### 3. [done] P1 — Failed or cancelled storage commands are assumed to have made no changes
 
 **Location:** `internal/mountdisks/run.go:145-204`; `internal/formatdisk/formatdisk.go:223-286`.
 
@@ -58,6 +58,8 @@ For example, a mount that takes effect before cancellation leaves `current.mount
 **Evidence:** `TestAuditRollbackReconcilesFailedCommandSideEffects` injected a mount side effect followed by `context.Canceled`. Both mount and decrypted mapper remained active; cleanup attempted zero unmounts.
 
 **Recommendation:** Record attempted transitions and reconcile actual state after errors using an independent bounded context. Verify backing-device and mount identity before cleaning up, so reconciliation does not remove pre-existing or unrelated resources. Add failure-after-side-effect cases, not just failure-before-side-effect cases, to both state-machine suites.
+
+**Resolution (2026-09-05, Admin-selected policy):** Admin chose explicit manual recovery instead of automatic rollback. Format/mount rollback code and success-only cleanup flags are removed. Their CLI handlers, plus unmount, now retain private per-invocation JSONL logs under `~/.mirror/operations/`, sync action starts before execution, record succeeded versus failed/uncertain outcomes, and retain preflight/verification observations. Failures trigger read-only `lsblk`/`findmnt` snapshots with an independent 30-second context; unavailable or invalid diagnostics are marked unknown. Console messages identify the log and warn that mounts/mappers may remain active and that format must not be rerun merely to retry open/mount. Passwords/stdin and external command output streams are not copied to the journal. New tests cover failure after open/mount/unmount/close side effects, format progress, no unrequested rollback, durable start-before-invocation, log retention/privacy, password exclusion, log-write failure preventing execution, and the caller operation lock. `go run ./bin/check.go` passes, including race tests. The original automatic-rollback probe is superseded by these manual-recovery assertions; copy/repair directory relocking remains unchanged.
 
 ### 4. P1 — A legitimate payload ending in `.b2sum` is silently omitted
 
@@ -209,7 +211,7 @@ Review-only test sources and the overlay are retained outside the worktree at:
 
 Files: `ensure_review_test.go`, `repair_review_test.go`, `mount_review_test.go`, `system_review_test.go`, `format_review_test.go`, and `review-overlay.json`.
 
-From this repository, replay the original review probes without changing source files (resolved findings should now pass):
+From this repository, replay the original review probes without changing source files. Resolution notes take precedence where Admin selected a different policy: issue 3's original automatic-rollback assertion is intentionally superseded by permanent manual-recovery tests.
 
 ```bash
 go test -count=1 \

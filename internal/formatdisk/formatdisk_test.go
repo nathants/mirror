@@ -567,24 +567,21 @@ func TestDeclinedOpenRetryNeverReformatsLUKS(t *testing.T) {
 	}
 }
 
-func TestFailedMountVerificationCleansUpOnlyCreatedState(t *testing.T) {
+func TestFailedMountVerificationLeavesStateForManualRecovery(t *testing.T) {
 	system := newFakeSystem()
 	system.wrongMountedSource = true
 	_, _, err := runFake("/dev/sdz\n/dev/sdz\n", system)
 	if err == nil {
 		t.Fatal("wrong mounted source unexpectedly succeeded")
 	}
-	if system.mounted {
-		t.Fatal("cleanup left the test filesystem mounted")
+	if !system.mounted || !system.mapperOpen {
+		t.Fatal("failure automatically changed mounted or mapper state")
 	}
-	if system.mapperOpen {
-		t.Fatal("cleanup left the test mapper open")
+	if count := countCalls(system.calls, "umount", ""); count != 0 {
+		t.Fatalf("failure called umount %d times, want 0", count)
 	}
-	if count := countCalls(system.calls, "umount", ""); count != 1 {
-		t.Fatalf("cleanup called umount %d times, want 1", count)
-	}
-	if count := countCalls(system.calls, "cryptsetup", "close"); count != 1 {
-		t.Fatalf("cleanup called cryptsetup close %d times, want 1", count)
+	if count := countCalls(system.calls, "cryptsetup", "close"); count != 0 {
+		t.Fatalf("failure called cryptsetup close %d times, want 0", count)
 	}
 }
 

@@ -297,7 +297,7 @@ func TestMountClosedDiskPreservesPasswordBytesAndVerifiesState(t *testing.T) {
 	}
 }
 
-func TestMountRejectsNonExt4AndClosesNewMapper(t *testing.T) {
+func TestMountRejectsNonExt4AndLeavesMapperForManualRecovery(t *testing.T) {
 	system := newFakeSystem()
 	system.filesystem = "xfs"
 	option := options(t, func() ([]byte, error) { return []byte("secret"), nil }, system.identifier)
@@ -305,10 +305,10 @@ func TestMountRejectsNonExt4AndClosesNewMapper(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "expected ext4") {
 		t.Fatalf("error = %v", err)
 	}
-	if system.mapperOpen || system.mounted {
-		t.Fatalf("rejection left mapperOpen=%v mounted=%v", system.mapperOpen, system.mounted)
+	if !system.mapperOpen || system.mounted {
+		t.Fatalf("unexpected state after rejection: mapperOpen=%v mounted=%v", system.mapperOpen, system.mounted)
 	}
-	if countCalls(system.calls, "mount", "") != 0 || countCalls(system.calls, "cryptsetup", "close") != 1 {
+	if countCalls(system.calls, "mount", "") != 0 || countCalls(system.calls, "cryptsetup", "close") != 0 {
 		t.Fatalf("mutating calls = %#v", mutatingCalls(system.calls))
 	}
 }
@@ -331,7 +331,7 @@ func TestMountAlreadyOpenMapperDoesNotReadPassword(t *testing.T) {
 	}
 }
 
-func TestMountFailureRollsBackOnlyStateCreatedByRun(t *testing.T) {
+func TestMountFailureLeavesStateForManualRecovery(t *testing.T) {
 	system := newFakeSystem()
 	system.failChown = true
 	option := options(t, func() ([]byte, error) { return []byte("secret"), nil }, system.identifier)
@@ -339,11 +339,11 @@ func TestMountFailureRollsBackOnlyStateCreatedByRun(t *testing.T) {
 	if err == nil {
 		t.Fatal("mount unexpectedly succeeded")
 	}
-	if system.mounted || system.mapperOpen {
-		t.Fatalf("rollback left mapperOpen=%v mounted=%v", system.mapperOpen, system.mounted)
+	if !system.mounted || !system.mapperOpen {
+		t.Fatalf("failure automatically changed state: mapperOpen=%v mounted=%v", system.mapperOpen, system.mounted)
 	}
-	if countCalls(system.calls, "umount", "") != 1 || countCalls(system.calls, "cryptsetup", "close") != 1 {
-		t.Fatalf("rollback calls = %#v", mutatingCalls(system.calls))
+	if countCalls(system.calls, "umount", "") != 0 || countCalls(system.calls, "cryptsetup", "close") != 0 {
+		t.Fatalf("unexpected automatic rollback: %#v", mutatingCalls(system.calls))
 	}
 }
 

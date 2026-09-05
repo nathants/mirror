@@ -126,7 +126,7 @@ func Run(
 	return a.run(ctx)
 }
 
-func (a *app) run(ctx context.Context) (returnErr error) {
+func (a *app) run(ctx context.Context) error {
 	disks, err := a.listDisks(ctx)
 	if err != nil {
 		return err
@@ -222,31 +222,9 @@ func (a *app) run(ctx context.Context) (returnErr error) {
 		return fmt.Errorf("verify LUKS container: %w", err)
 	}
 
-	mapperOpen := false
-	mounted := false
-	defer func() {
-		if returnErr == nil {
-			return
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if mounted {
-			if cleanupErr := a.runCommand(cleanupCtx, nil, "umount", mountpoint); cleanupErr != nil {
-				fmt.Fprintf(a.errOut, "warning: failed to unmount %s during cleanup: %v\n", mountpoint, cleanupErr)
-				return
-			}
-		}
-		if mapperOpen {
-			if cleanupErr := a.runCommand(cleanupCtx, nil, "cryptsetup", "close", cryptName); cleanupErr != nil {
-				fmt.Fprintf(a.errOut, "warning: failed to close %s during cleanup: %v\n", cryptName, cleanupErr)
-			}
-		}
-	}()
-
 	for {
 		err = a.runCommand(ctx, a.commandInput, "cryptsetup", "open", partition, cryptName)
 		if err == nil {
-			mapperOpen = true
 			break
 		}
 		fmt.Fprintf(a.errOut, "opening LUKS container failed: %v\n", err)
@@ -283,7 +261,6 @@ func (a *app) run(ctx context.Context) (returnErr error) {
 	if err := a.runCommand(ctx, nil, "mount", mapper, mountpoint); err != nil {
 		return fmt.Errorf("mount formatted disk: %w", err)
 	}
-	mounted = true
 
 	source, err := a.system.Output(ctx, "findmnt", "--noheadings", "--output", "SOURCE", "--target", mountpoint)
 	if err != nil {

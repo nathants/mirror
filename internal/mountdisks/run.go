@@ -11,7 +11,6 @@ import (
 	"reflect"
 	"strings"
 	"text/tabwriter"
-	"time"
 
 	"mirror/internal/terminal"
 )
@@ -142,44 +141,11 @@ func (a *app) mount(ctx context.Context) error {
 		}
 	}
 
-	type appliedState struct {
-		plan    diskPlan
-		opened  bool
-		mounted bool
-	}
-	applied := make([]appliedState, 0, len(actions))
-	succeeded := false
-	defer func() {
-		if succeeded {
-			return
-		}
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		for index := len(applied) - 1; index >= 0; index-- {
-			state := applied[index]
-			if state.mounted {
-				if cleanupErr := a.runCommand(cleanupCtx, nil, "umount", state.plan.Mountpoint); cleanupErr != nil {
-					fmt.Fprintf(a.errOut, "warning: failed to roll back mount %s: %v\n", state.plan.Mountpoint, cleanupErr)
-					continue
-				}
-			}
-			if state.opened {
-				if cleanupErr := a.runCommand(cleanupCtx, nil, "cryptsetup", "close", state.plan.CryptName); cleanupErr != nil {
-					fmt.Fprintf(a.errOut, "warning: failed to roll back mapper %s: %v\n", state.plan.MapperPath, cleanupErr)
-				}
-			}
-		}
-	}()
-
 	for _, plan := range actions {
-		state := appliedState{plan: plan}
-		applied = append(applied, state)
-		current := &applied[len(applied)-1]
 		if plan.Mapper == nil {
 			if err := a.runCommand(ctx, bytes.NewReader(password), "cryptsetup", "open", plan.Partition.Path, plan.CryptName, "--key-file", "-"); err != nil {
 				return fmt.Errorf("open %s: %w", plan.Partition.Path, err)
 			}
-			current.opened = true
 			if _, err := a.system.Lstat(plan.MapperPath); err != nil {
 				return fmt.Errorf("cryptsetup reported success but mapper is absent at %s: %w", plan.MapperPath, err)
 			}
@@ -200,7 +166,6 @@ func (a *app) mount(ctx context.Context) error {
 		if err := a.runCommand(ctx, nil, "mount", plan.MapperPath, plan.Mountpoint); err != nil {
 			return fmt.Errorf("mount %s: %w", plan.MapperPath, err)
 		}
-		current.mounted = true
 		source, err := a.system.Output(ctx, "findmnt", "--noheadings", "--output", "SOURCE", "--target", plan.Mountpoint)
 		if err != nil {
 			return fmt.Errorf("verify mountpoint %s: %w", plan.Mountpoint, err)
@@ -214,7 +179,6 @@ func (a *app) mount(ctx context.Context) error {
 		}
 		fmt.Fprintf(a.out, "mounted %s at %s\n", plan.Partition.Path, plan.Mountpoint)
 	}
-	succeeded = true
 	return nil
 }
 

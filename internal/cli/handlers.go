@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"mirror/internal/actionlog"
 	"mirror/internal/ensurecopies"
 	"mirror/internal/formatdisk"
 	"mirror/internal/mountdisks"
@@ -21,14 +22,14 @@ import (
 func productionHandlers(stdin io.Reader, stdout, stderr io.Writer) handlers {
 	return handlers{
 		format: func(ctx context.Context, caller callerIdentity) error {
-			return withLock(ctx, caller, func() error {
-				err := formatdisk.Run(ctx, system.Exec{}, stdin, stdout, stderr, formatdisk.Options{HomeDir: caller.HomeDir, OwnerUID: caller.UID, OwnerGID: caller.GID})
+			return withLoggedDiskOperation(ctx, caller, "format", stderr, func(os *actionlog.System) error {
+				err := formatdisk.Run(ctx, os, stdin, stdout, stderr, formatdisk.Options{HomeDir: caller.HomeDir, OwnerUID: caller.UID, OwnerGID: caller.GID})
 				return declinedAsSilent(err, formatdisk.ErrDeclined)
 			})
 		},
 		mount: func(ctx context.Context, caller callerIdentity) error {
-			return withLock(ctx, caller, func() error {
-				err := mountdisks.Mount(ctx, system.Exec{}, stdin, stdout, stderr, mountdisks.Options{
+			return withLoggedDiskOperation(ctx, caller, "mount", stderr, func(os *actionlog.System) error {
+				err := mountdisks.Mount(ctx, os, stdin, stdout, stderr, mountdisks.Options{
 					ConfigPath: filepath.Join(caller.HomeDir, ".mirror", "disks"), HomeDir: caller.HomeDir, OwnerUID: caller.UID, OwnerGID: caller.GID,
 					ReadPassword: func() ([]byte, error) { return terminal.ReadPassword(ctx, stdout, "disk password: ") },
 				})
@@ -36,8 +37,8 @@ func productionHandlers(stdin io.Reader, stdout, stderr io.Writer) handlers {
 			})
 		},
 		unmount: func(ctx context.Context, caller callerIdentity) error {
-			return withLock(ctx, caller, func() error {
-				err := mountdisks.Unmount(ctx, system.Exec{}, stdin, stdout, stderr, mountdisks.Options{ConfigPath: filepath.Join(caller.HomeDir, ".mirror", "disks"), HomeDir: caller.HomeDir, OwnerUID: caller.UID, OwnerGID: caller.GID})
+			return withLoggedDiskOperation(ctx, caller, "unmount", stderr, func(os *actionlog.System) error {
+				err := mountdisks.Unmount(ctx, os, stdin, stdout, stderr, mountdisks.Options{ConfigPath: filepath.Join(caller.HomeDir, ".mirror", "disks"), HomeDir: caller.HomeDir, OwnerUID: caller.UID, OwnerGID: caller.GID})
 				return declinedAsSilent(err, mountdisks.ErrDeclined)
 			})
 		},
@@ -55,6 +56,23 @@ func productionHandlers(stdin io.Reader, stdout, stderr io.Writer) handlers {
 		},
 	}
 }
+func withLoggedDiskOperation(ctx context.Context, caller callerIdentity, operation string, output io.Writer, run func(*actionlog.System) error) error {
+	return withLock(ctx, caller, func() error {
+		log, err := actionlog.Open(caller.HomeDir, operation, caller.UID, caller.GID, output)
+		if err != nil {
+			return err
+		}
+		observed := &actionlog.System{Backend: system.Exec{}, Log: log, Context: ctx}
+		result := run(observed)
+		logErr := errors.Join(observed.Finish(errors.Join(result, ctx.Err())), log.Close())
+		if logErr != nil {
+			// Do not hide logging failures behind a normally silent decline.
+			return fmt.Errorf("operation result: %v; action logging failed: %w", result, logErr)
+		}
+		return result
+	})
+}
+
 func withOwnLock(ctx context.Context, run func(string) error) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
