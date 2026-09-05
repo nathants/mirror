@@ -127,7 +127,7 @@ Refusing ambiguous repair is correct; throwing away the observations and conflat
 
 **Resolution (2026-09-05, Admin-approved safe-subset policy):** Log v4 retains every repairable and unresolved finding, with original checksum evidence, refusal reasons, and per-file progress; older versions require a fresh scan. Consensus failures no longer discard the completed scan or prevent confirmation/application of independent safe files. The command syncs each file's start before publication and its completion only after desired-state verification. Operational, output, or checkpoint failures stop later repairs, retain failed/uncertain versus unattempted states, and still attempt directory relocking. Stdout lists all findings and a final per-category count/path summary; unresolved work returns nonzero even after safe repairs succeed. Resume revalidates safe-file state, requires completed entries to remain desired, and reports unresolved historical evidence without rescanning or applying it. New regressions first reproduced the lost mixed scan and now verify one safe repair with two untouched unresolved files, preview, unresolved-only reporting/resume, exact log round trips, schema rejection, durable start-before-publication, failure after publication, checkpoint failures, interrupted resume without duplicate quarantine, completed-file drift, and failed plan output preventing confirmation. The original scan-retention probe and `go run ./bin/check.go` pass, including race tests, vet, staticcheck, and module/wrapper checks. All filesystem tests use disposable directories, not host block devices.
 
-### 9. P2 — Unmount recovery requires the filesystem to be healthy enough to mount
+### 9. [done] P2 — Unmount recovery requires the filesystem to be healthy enough to mount
 
 **Location:** `internal/mountdisks/inventory.go:179-184,242-251`; `internal/mountdisks/run.go:222-244`.
 
@@ -136,6 +136,8 @@ Unmount uses the same preflight policy as mounted-root discovery/mounting. It re
 **Evidence:** `TestAuditUnmountCanCloseKnownNonExt4Mapper` supplied a configured LUKS partition with its expected open, unmounted crypt mapper and an empty filesystem type. Unmount rejected it before `cryptsetup close`.
 
 **Recommendation:** Share inventory parsing, but separate action-specific policies. For unmount/close, validate identity, ownership of the mapping, mount relationships, and unexpected holders; do not require a mountable writable filesystem merely to deactivate it.
+
+**Resolution (2026-09-05):** Shared inventory preflight retains all disk/LUKS/mapper identity, holder, and mount-topology checks. Writable-device and decrypted-ext4 requirements now live in a separate mountability check used by mount preflight/revalidation and mounted-root discovery, not unmount. Confirmed unmount can deactivate an identified mapper with an unknown or non-ext4 filesystem and read-only disk/partition/mapper devices. New injected-OS regressions first reproduced these failures, then verified mounted and open-only recovery, exact unmount/close ordering, declined confirmation without mutation, continued mount/root-discovery refusal, rejection of unsafe identity/holders/mounts, and post-confirmation identity drift. The original review probe and `go run ./bin/check.go` pass, including race tests, vet, staticcheck, and module/wrapper checks. No host block devices were accessed; manual-recovery logging and no-rollback policy remain unchanged.
 
 ### 10. P2 — Formatter discovers missing required tools only after erasing the partition table
 

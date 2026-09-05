@@ -121,6 +121,9 @@ func MountedRoots(ctx context.Context, system System, configPath, homeDir, mappe
 	if err != nil {
 		return Snapshot{}, err
 	}
+	if err := requireMountable(plans); err != nil {
+		return Snapshot{}, err
+	}
 	var roots []string
 	for _, plan := range plans {
 		if plan.MountedSource != "" {
@@ -176,9 +179,6 @@ func inspectPlans(ctx context.Context, system System, identifiers []string, home
 		if !wholeDiskPattern.MatchString(disk.Path) {
 			return nil, nil, fmt.Errorf("configured disk %s is not a whole /dev/sdX device: %s", identifier, disk.Path)
 		}
-		if disk.ReadOnly {
-			return nil, nil, fmt.Errorf("configured disk is read-only: %s", disk.Path)
-		}
 		if disk.Serial == "" && disk.WWN == "" {
 			return nil, nil, fmt.Errorf("configured disk has neither a serial nor a WWN: %s", disk.Path)
 		}
@@ -191,9 +191,6 @@ func inspectPlans(ctx context.Context, system System, identifiers []string, home
 			return nil, nil, fmt.Errorf("configured disk must have exactly one partition at %s1: %s", disk.Path, disk.Path)
 		}
 		partition := partitions[0]
-		if partition.ReadOnly {
-			return nil, nil, fmt.Errorf("configured partition is read-only: %s", partition.Path)
-		}
 		if !strings.EqualFold(partition.Filesystem, "crypto_LUKS") {
 			return nil, nil, fmt.Errorf("configured partition is not a LUKS container: %s has type %q", partition.Path, partition.Filesystem)
 		}
@@ -240,14 +237,8 @@ func inspectPlans(ctx context.Context, system System, identifiers []string, home
 				return nil, nil, fmt.Errorf("mountpoint reports %s but mapper is absent: %s", mountedSource, mapperPath)
 			}
 		} else {
-			if mapper.ReadOnly {
-				return nil, nil, fmt.Errorf("mapper is read-only: %s", mapperPath)
-			}
 			if len(children[mapperPath]) != 0 {
 				return nil, nil, fmt.Errorf("mapper has unexpected active holders: %s", mapperPath)
-			}
-			if !strings.EqualFold(mapper.Filesystem, "ext4") {
-				return nil, nil, fmt.Errorf("mapper does not contain ext4: %s has type %q", mapperPath, mapper.Filesystem)
 			}
 			mapperMounts := deviceMountpoints(*mapper)
 			sort.Strings(mapperMounts)
@@ -271,6 +262,28 @@ func inspectPlans(ctx context.Context, system System, identifiers []string, home
 		})
 	}
 	return plans, missing, nil
+}
+
+// requireMountable is additional policy for mounting and mounted-root access,
+// not for deactivation. Identity, holder, and mount checks stay in inspectPlans.
+func requireMountable(plans []diskPlan) error {
+	for _, plan := range plans {
+		if plan.Disk.ReadOnly {
+			return fmt.Errorf("configured disk is read-only: %s", plan.Disk.Path)
+		}
+		if plan.Partition.ReadOnly {
+			return fmt.Errorf("configured partition is read-only: %s", plan.Partition.Path)
+		}
+		if plan.Mapper != nil {
+			if plan.Mapper.ReadOnly {
+				return fmt.Errorf("mapper is read-only: %s", plan.MapperPath)
+			}
+			if !strings.EqualFold(plan.Mapper.Filesystem, "ext4") {
+				return fmt.Errorf("mapper does not contain ext4: %s has type %q", plan.MapperPath, plan.Mapper.Filesystem)
+			}
+		}
+	}
+	return nil
 }
 
 func deviceMountpoints(device blockDevice) []string {

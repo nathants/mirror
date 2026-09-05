@@ -76,7 +76,7 @@ func newApp(system System, stdin io.Reader, stdout, stderr io.Writer, option Opt
 }
 
 func (a *app) mount(ctx context.Context) error {
-	identifiers, plans, missing, err := a.preflight(ctx)
+	identifiers, plans, missing, err := a.mountPreflight(ctx)
 	if err != nil {
 		return err
 	}
@@ -125,7 +125,7 @@ func (a *app) mount(ctx context.Context) error {
 		}
 	}
 
-	afterIdentifiers, afterPlans, afterMissing, err := a.preflight(ctx)
+	afterIdentifiers, afterPlans, afterMissing, err := a.mountPreflight(ctx)
 	if err != nil {
 		return fmt.Errorf("revalidate mount plan: %w", err)
 	}
@@ -244,6 +244,19 @@ func (a *app) unmount(ctx context.Context) error {
 	return nil
 }
 
+func (a *app) mountPreflight(ctx context.Context) ([]string, []diskPlan, []string, error) {
+	identifiers, plans, missing, err := a.preflight(ctx)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if err := requireMountable(plans); err != nil {
+		return nil, nil, nil, err
+	}
+	return identifiers, plans, missing, nil
+}
+
+// Shared preflight proves identity and topology. Deactivation deliberately does
+// not require writable devices or a mountable decrypted filesystem.
 func (a *app) preflight(ctx context.Context) ([]string, []diskPlan, []string, error) {
 	identifiers, err := loadConfig(a.option.ConfigPath)
 	if err != nil {
