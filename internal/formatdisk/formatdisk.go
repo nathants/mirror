@@ -138,9 +138,15 @@ func (a *app) run(ctx context.Context) error {
 		return errors.New("no eligible whole /dev/sdX disks found")
 	}
 
-	fmt.Fprintln(a.out, "detected whole disks:")
-	writeDiskTable(a.out, disks)
-	fmt.Fprint(a.out, "\nwhich whole disk do you want to reformat (and completely erase)? ")
+	if _, err := fmt.Fprintln(a.out, "detected whole disks:"); err != nil {
+		return err
+	}
+	if err := writeDiskTable(a.out, disks); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprint(a.out, "\nwhich whole disk do you want to reformat (and completely erase)? "); err != nil {
+		return err
+	}
 	device, err := terminal.ReadLine(ctx, a.input)
 	if err != nil {
 		return fmt.Errorf("read device selection: %w", err)
@@ -160,18 +166,23 @@ func (a *app) run(ctx context.Context) error {
 		return err
 	}
 
-	fmt.Fprintln(a.out, "\nselected disk:")
-	writeDiskTable(a.out, before)
-	fmt.Fprintf(a.out, "\ncrypt name: %s\n", cryptName)
-	fmt.Fprintf(a.out, "mountpoint: %s\n", mountpoint)
-	fmt.Fprintf(a.out, "\nWARNING: all data on %s will be permanently erased.\n", device)
-	fmt.Fprintf(a.out, "Type the exact device path (%s) to confirm: ", device)
+	if _, err := fmt.Fprintln(a.out, "\nselected disk:"); err != nil {
+		return err
+	}
+	if err := writeDiskTable(a.out, before); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(a.out, "\ncrypt name: %s\nmountpoint: %s\n\nWARNING: all data on %s will be permanently erased.\nType the exact device path (%s) to confirm: ", cryptName, mountpoint, device, device); err != nil {
+		return err
+	}
 	confirmation, err := terminal.ReadLine(ctx, a.input)
 	if err != nil {
 		return fmt.Errorf("read confirmation: %w", err)
 	}
 	if confirmation != device {
-		fmt.Fprintln(a.out, "\naborting; nothing was changed.")
+		if _, err := fmt.Fprintln(a.out, "\naborting; nothing was changed."); err != nil {
+			return err // not a silent decline when its result could not be displayed
+		}
 		return ErrDeclined
 	}
 
@@ -194,7 +205,9 @@ func (a *app) run(ctx context.Context) error {
 		return err
 	}
 
-	fmt.Fprintf(a.out, "\nconfirmed and revalidated; formatting %s...\n\n", device)
+	if _, err := fmt.Fprintf(a.out, "\nconfirmed and revalidated; formatting %s...\n\n", device); err != nil {
+		return err
+	}
 	partitionInput := strings.NewReader("g\nn\n1\n\n\n\nw\n")
 	if err := a.runCommand(ctx, partitionInput, "fdisk", "-w", "always", "-W", "always", device); err != nil {
 		return fmt.Errorf("write partition table: %w", err)
@@ -235,14 +248,19 @@ func (a *app) run(ctx context.Context) error {
 		if err == nil {
 			break
 		}
-		fmt.Fprintf(a.errOut, "opening LUKS container failed: %v\n", err)
-		fmt.Fprint(a.out, "retry opening it? y/N: ")
+		openErr := fmt.Errorf("opening LUKS container failed: %w", err)
+		if _, outputErr := fmt.Fprintln(a.errOut, openErr); outputErr != nil {
+			return errors.Join(openErr, outputErr)
+		}
+		if _, outputErr := fmt.Fprint(a.out, "retry opening it? y/N: "); outputErr != nil {
+			return errors.Join(openErr, outputErr)
+		}
 		answer, readErr := terminal.ReadLine(ctx, a.input)
 		if readErr != nil {
-			return fmt.Errorf("read open retry response: %w", readErr)
+			return errors.Join(openErr, fmt.Errorf("read open retry response: %w", readErr))
 		}
 		if answer != "y" {
-			return errors.New("opening LUKS container was not completed; the LUKS header was not reformatted")
+			return fmt.Errorf("opening LUKS container was not completed; the LUKS header was not reformatted: %w", openErr)
 		}
 	}
 
@@ -282,8 +300,8 @@ func (a *app) run(ctx context.Context) error {
 		return fmt.Errorf("set mount ownership on %s: %w", mountpoint, err)
 	}
 
-	fmt.Fprintf(a.out, "\nformatted and mounted %s at %s\n", device, mountpoint)
-	return nil
+	_, err = fmt.Fprintf(a.out, "\nformatted and mounted %s at %s\n", device, mountpoint)
+	return err
 }
 
 var ErrDeclined = errors.New("format declined")
@@ -599,11 +617,13 @@ func (a *app) rootTypeAllowed(deviceType string) bool {
 	return deviceType == "disk"
 }
 
-func writeDiskTable(writer io.Writer, devices []blockDevice) {
+func writeDiskTable(writer io.Writer, devices []blockDevice) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "PATH\tSIZE\tTYPE\tMODEL\tSERIAL\tWWN")
+	if _, err := fmt.Fprintln(table, "PATH\tSIZE\tTYPE\tMODEL\tSERIAL\tWWN"); err != nil {
+		return err
+	}
 	for _, device := range devices {
-		fmt.Fprintf(
+		if _, err := fmt.Fprintf(
 			table,
 			"%s\t%s\t%s\t%s\t%s\t%s\n",
 			device.Path,
@@ -612,9 +632,11 @@ func writeDiskTable(writer io.Writer, devices []blockDevice) {
 			emptyAsDash(device.Model),
 			emptyAsDash(device.Serial),
 			emptyAsDash(device.WWN),
-		)
+		); err != nil {
+			return err
+		}
 	}
-	_ = table.Flush()
+	return table.Flush()
 }
 
 func humanSize(size uint64) string {

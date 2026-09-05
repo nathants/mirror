@@ -122,7 +122,10 @@ func ReadPassword(ctx context.Context, writer io.Writer, prompt string) (passwor
 	if _, err := fmt.Fprint(writer, prompt); err != nil {
 		return nil, err
 	}
-	defer fmt.Fprintln(writer)
+	defer func() {
+		_, err := fmt.Fprintln(writer)
+		returnErr = errors.Join(returnErr, err)
+	}()
 	return readPassword(ctx, tty)
 }
 func readPassword(ctx context.Context, reader io.Reader) (password []byte, returnErr error) {
@@ -174,7 +177,9 @@ func Confirm(ctx context.Context, writer io.Writer, prompt string) (returnErr er
 		return err
 	}
 	defer func() { returnErr = errors.Join(returnErr, restore()) }()
-	fmt.Fprintln(writer, prompt+"\nproceed? y/n")
+	if _, err := fmt.Fprintln(writer, prompt+"\nproceed? y/n"); err != nil {
+		return err
+	}
 	choice, err := PromptByte(ctx, tty)
 	if err != nil {
 		return err

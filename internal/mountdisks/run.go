@@ -81,7 +81,9 @@ func (a *app) mount(ctx context.Context) error {
 		return err
 	}
 	for _, identifier := range missing {
-		fmt.Fprintf(a.errOut, "drive not found: %s\n", identifier)
+		if _, err := fmt.Fprintf(a.errOut, "drive not found: %s\n", identifier); err != nil {
+			return err
+		}
 	}
 	var actions []diskPlan
 	needsPassword := false
@@ -104,8 +106,12 @@ func (a *app) mount(ctx context.Context) error {
 		return errors.New("nothing to mount")
 	}
 
-	fmt.Fprintln(a.out, "going to unlock and mount:")
-	writePlanTable(a.out, actions)
+	if _, err := fmt.Fprintln(a.out, "going to unlock and mount:"); err != nil {
+		return err
+	}
+	if err := writePlanTable(a.out, actions); err != nil {
+		return err
+	}
 	if err := a.confirm(ctx, "mount"); err != nil {
 		return err
 	}
@@ -177,7 +183,9 @@ func (a *app) mount(ctx context.Context) error {
 		if err := a.runCommand(ctx, nil, "chown", owner, plan.Mountpoint); err != nil {
 			return fmt.Errorf("set mount ownership on %s: %w", plan.Mountpoint, err)
 		}
-		fmt.Fprintf(a.out, "mounted %s at %s\n", plan.Partition.Path, plan.Mountpoint)
+		if _, err := fmt.Fprintf(a.out, "mounted %s at %s\n", plan.Partition.Path, plan.Mountpoint); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -188,7 +196,9 @@ func (a *app) unmount(ctx context.Context) error {
 		return err
 	}
 	for _, identifier := range missing {
-		fmt.Fprintf(a.errOut, "drive not found: %s\n", identifier)
+		if _, err := fmt.Fprintf(a.errOut, "drive not found: %s\n", identifier); err != nil {
+			return err
+		}
 	}
 	var actions []diskPlan
 	for _, plan := range plans {
@@ -209,8 +219,12 @@ func (a *app) unmount(ctx context.Context) error {
 		return errors.New("nothing to unmount")
 	}
 
-	fmt.Fprintln(a.out, "going to unmount and close:")
-	writePlanTable(a.out, actions)
+	if _, err := fmt.Fprintln(a.out, "going to unmount and close:"); err != nil {
+		return err
+	}
+	if err := writePlanTable(a.out, actions); err != nil {
+		return err
+	}
 	if err := a.confirm(ctx, "unmount"); err != nil {
 		return err
 	}
@@ -239,7 +253,9 @@ func (a *app) unmount(ctx context.Context) error {
 		} else if !errors.Is(err, os.ErrNotExist) {
 			return fmt.Errorf("inspect closed mapper %s: %w", plan.MapperPath, err)
 		}
-		fmt.Fprintf(a.out, "closed %s\n", plan.MapperPath)
+		if _, err := fmt.Fprintf(a.out, "closed %s\n", plan.MapperPath); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -311,13 +327,17 @@ func (a *app) validateMountpoint(path string, requireEmpty bool) error {
 }
 
 func (a *app) confirm(ctx context.Context, action string) error {
-	fmt.Fprintf(a.out, "type %q to confirm: ", action)
+	if _, err := fmt.Fprintf(a.out, "type %q to confirm: ", action); err != nil {
+		return err
+	}
 	answer, err := terminal.ReadLine(ctx, a.input)
 	if err != nil {
 		return fmt.Errorf("read confirmation: %w", err)
 	}
 	if answer != action {
-		fmt.Fprintln(a.out, "aborting; nothing was changed.")
+		if _, err := fmt.Fprintln(a.out, "aborting; nothing was changed."); err != nil {
+			return err // not a silent decline when its result could not be displayed
+		}
 		return ErrDeclined
 	}
 	return nil
@@ -331,9 +351,11 @@ func (a *app) runCommand(ctx context.Context, stdin io.Reader, command string, a
 	return a.system.Run(ctx, stdin, a.out, a.errOut, command, args...)
 }
 
-func writePlanTable(writer io.Writer, plans []diskPlan) {
+func writePlanTable(writer io.Writer, plans []diskPlan) error {
 	table := tabwriter.NewWriter(writer, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(table, "DISK\tPARTITION\tMODEL\tSERIAL\tWWN\tSTATE\tMOUNTPOINT")
+	if _, err := fmt.Fprintln(table, "DISK\tPARTITION\tMODEL\tSERIAL\tWWN\tSTATE\tMOUNTPOINT"); err != nil {
+		return err
+	}
 	for _, plan := range plans {
 		state := "closed"
 		if plan.Mapper != nil {
@@ -342,7 +364,7 @@ func writePlanTable(writer io.Writer, plans []diskPlan) {
 		if plan.MountedSource != "" {
 			state = "mounted"
 		}
-		fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		if _, err := fmt.Fprintf(table, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			plan.Disk.Path,
 			plan.Partition.Path,
 			emptyAsDash(plan.Disk.Model),
@@ -350,9 +372,11 @@ func writePlanTable(writer io.Writer, plans []diskPlan) {
 			emptyAsDash(plan.Disk.WWN),
 			state,
 			plan.Mountpoint,
-		)
+		); err != nil {
+			return err
+		}
 	}
-	_ = table.Flush()
+	return table.Flush()
 }
 
 func emptyAsDash(value string) string {
