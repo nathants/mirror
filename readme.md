@@ -20,13 +20,13 @@ Use a minimum of 2 disks. 3 is better. 4+ is fine for extreme durability.
 
 ## Build
 
-Build the single `mirror` binary after changing or cloning the repository:
+Build the single `mirror` binary from the repository root after changing or cloning the repository:
 
 ```bash
-mirror-build
+make
 ```
 
-`bin/mirror` is a thin launcher for the resulting repository-root binary. Both scripts are available when this repository's `bin/` directory is on `PATH`.
+`make build` runs the same build and writes `./mirror`. `bin/mirror` is a thin launcher for that binary, available when this repository's `bin/` directory is on `PATH`.
 
 ## Commands
 
@@ -108,7 +108,7 @@ The normal suite exercises production Go state machines through injected operati
 go run ./bin/check.go
 ```
 
-The check automation is a standard-library Go program. It runs formatting checks, unit tests, race tests, vet, staticcheck, module checks, and thin-wrapper syntax checks.
+The check automation is a standard-library Go program. It runs formatting checks, `make build`, unit tests, race tests, vet, staticcheck, module checks, and thin-wrapper syntax checks.
 
 The opt-in end-to-end test uses the `vm` project and its `mirror-e2e` image. It boots an ephemeral VM with a blank, instance-only 1 GB secondary disk and launches the production `mirror format`, `mirror mount`, and `mirror unmount` commands through guest sudo using the real `fdisk`, `cryptsetup`, `mkfs.ext4`, `mount`, and `umount`. A guest-side checker verifies GPT, LUKS2, ext4 with zero reserved blocks, and caller UID/GID ownership. The unprivileged caller writes and syncs a payload once, then reads that same payload without recreating or truncating it after unmount/remount. The test finishes closed and unmounted. The VM receives no host block device, and `vm bake` never includes secondary disks in images.
 

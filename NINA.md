@@ -1,7 +1,7 @@
 # Project guidelines
 
 - This is Linux-only storage software. Favor explicit, fail-closed state machines over cleverness.
-- The only user-facing program is the compiled `cmd/mirror` binary; add functionality as a `mirror` subcommand rather than another entrypoint. Keep shared behavior in normal packages.
+- The only user-facing program is the compiled `cmd/mirror` binary; add functionality as a `mirror` subcommand rather than another entrypoint. Keep shared behavior in normal packages. `make` or `make build` builds `./mirror`; the Go checker exercises this build target.
 - Shell is allowed only for thin `bin/` wrappers that locate the repository and invoke one Go command or the compiled `mirror` binary. Do not put branching, parsing, testing, storage logic, or command pipelines in shell.
 - Write simple repository automation as `bin/*.go`, invoke it with `go run`, and use only the Go standard library in those automation programs. The standalone `bin/bake-e2e-image.go` uses `//go:build ignore` to avoid colliding with the checker's main; `bin/check.go` explicitly compiles and analyzes it by filename in addition to package-wide checks.
 - Invoke external programs with exact argument vectors through `os/exec`; never route program logic through a shell. Prefer structured machine-readable output over parsing presentation text.

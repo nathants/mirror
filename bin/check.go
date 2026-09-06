@@ -52,6 +52,7 @@ func main() {
 	}
 
 	checks := [][]string{
+		{"make", "build"},
 		{"go", "test", "./..."},
 		{"go", "test", "-race", "./..."},
 		{"go", "vet", "./..."},
@@ -83,7 +84,6 @@ func main() {
 	expectedWrappers := map[string]string{
 		"bake-e2e-image": wrapperPrefix + "exec go run ./bin/bake-e2e-image.go \"$@\"\n",
 		"mirror":         wrapperPrefix + "exec ./mirror \"$@\"\n",
-		"mirror-build":   wrapperPrefix + "exec go build -trimpath -o ./mirror ./cmd/mirror\n",
 	}
 	entries, err := os.ReadDir(filepath.Join(repo, "bin"))
 	if err != nil {
