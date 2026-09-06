@@ -53,7 +53,19 @@ func Run(ctx context.Context, preview bool, options Options) (returnErr error) {
 	if len(actions) == 0 {
 		return ctx.Err()
 	}
-	guard, err := lib.OpenDirectoryGuard(ctx, state.Roots)
+	// Only planned write destinations need directory mutations. A data source
+	// is also a destination when it needs a checksum sidecar.
+	writes := make(map[string]bool)
+	for _, a := range actions {
+		writes[a.destination] = true
+	}
+	var destinations []string
+	for _, root := range state.Roots {
+		if writes[root] {
+			destinations = append(destinations, root)
+		}
+	}
+	guard, err := lib.OpenDirectoryGuard(ctx, state.Roots, destinations)
 	if err != nil {
 		return err
 	}

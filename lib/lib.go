@@ -30,7 +30,7 @@ func LockDirs(ctx context.Context, home string, locked bool) (returnErr error) {
 	if err != nil {
 		return err
 	}
-	guard, err := OpenDirectoryGuard(ctx, state.Roots)
+	guard, err := OpenDirectoryGuard(ctx, state.Roots, state.Roots)
 	if err != nil {
 		return err
 	}

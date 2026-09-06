@@ -68,7 +68,7 @@ Repair retains and displays every repairable and unresolved finding from a compl
 
 Use `mirror repair-copies --resume` to continue the safe portion of the last pending plan without repeating the full scan, or to report its remaining unresolved findings. Resume never guesses a checksum for an unresolved file: inspect its saved evidence manually, then run a fresh scan after resolving it. Repair does not reconcile symlink targets or fill missing data copies; use ensure-copies for missing copies after resolving disagreements.
 
-`mirror lock` makes mirror directories read-only; `mirror unlock` makes them writable for deliberate changes.
+`mirror lock` makes mirror directories read-only; `mirror unlock` makes them writable for deliberate changes. `ensure-copies` unlocks and subsequently relocks only disks with planned writes, including missing checksum sidecars; disks used only for reading keep their directory modes unchanged. To keep an ingest disk locked while copying to newly attached mirrors, first run `ensure-copies` with only that disk mounted to generate its missing sidecars. `lock` itself does not generate checksums.
 
 ## Configuration
 

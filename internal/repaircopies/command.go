@@ -167,7 +167,7 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 		if err := ValidateCurrentState(ctx, log, log.Roots); err != nil {
 			return err
 		}
-		guard, err := lib.OpenDirectoryGuard(ctx, log.Roots)
+		guard, err := lib.OpenDirectoryGuard(ctx, log.Roots, log.Roots)
 		if err != nil {
 			return err
 		}
