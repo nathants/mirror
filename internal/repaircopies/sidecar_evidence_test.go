@@ -201,9 +201,9 @@ func TestSidecarOnlyConsensusEdges(t *testing.T) {
 	}
 }
 
-func TestOldLogsRequireFreshSidecarEvidenceScan(t *testing.T) {
+func TestOldLogsRequireFreshEvidenceScan(t *testing.T) {
 	log, _ := sidecarEvidenceFixture(t)
-	for _, version := range []int{1, 2} {
+	for version := 1; version < LogVersion; version++ {
 		log.Version = version
 		path := filepath.Join(t.TempDir(), "old-log.json")
 		if err := writeJSONForTest(path, log, 0600); err != nil {

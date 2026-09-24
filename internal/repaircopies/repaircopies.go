@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	LogVersion       = 5
+	LogVersion       = 6
 	StatusScanning   = "scanning"
 	StatusPending    = "pending"
 	StatusClean      = "clean"
@@ -27,6 +27,9 @@ const (
 	RepairFailed     = "failed/uncertain"
 	RepairCompleted  = "completed"
 	checksumSuffix   = ".b2sum"
+	entryRegular     = "regular"
+	entryDirectory   = "directory"
+	entrySymlink     = "symlink"
 )
 
 var ErrUnresolved = errors.New("unresolved repair findings remain")
@@ -39,13 +42,22 @@ type Sidecar struct {
 	Value string `json:"value,omitempty"`
 }
 
-// Copy records a mirror's evidence. An empty ActualChecksum means the data
-// path was absent: its sidecar still votes, but neither path is a repair target.
-// Resume and completion require these evidence-only paths to remain unchanged.
+// TypeConflict records an incompatible entry at a data/sidecar path or one of
+// its ancestors. It never votes or authorizes a mutation.
+type TypeConflict struct {
+	RelPath string `json:"path"`
+	Kind    string `json:"kind"`
+}
+
+// Copy records a mirror's data, sidecar-only evidence, or a type conflict.
+// Without a conflict, an empty ActualChecksum means absent data: its sidecar
+// still votes, but neither path is a repair target. Resume and completion require
+// these evidence-only paths to remain unchanged. Conflicts are unresolved only.
 type Copy struct {
-	Root           string   `json:"root"`
-	ActualChecksum string   `json:"actual_checksum"`
-	Sidecar        *Sidecar `json:"sidecar"`
+	Root           string        `json:"root"`
+	ActualChecksum string        `json:"actual_checksum"`
+	Sidecar        *Sidecar      `json:"sidecar"`
+	Conflict       *TypeConflict `json:"conflict,omitempty"`
 }
 type Repair struct {
 	RelPath  string `json:"path"`
@@ -55,8 +67,8 @@ type Repair struct {
 	Error    string `json:"error,omitempty"`
 }
 
-// Unresolved retains all observed evidence and the consensus refusal reason.
-// It is never an apply target; manual resolution requires a fresh scan.
+// Unresolved retains observed evidence and the type-conflict or consensus
+// refusal reason. It is never an apply target; resolution requires a fresh scan.
 type Unresolved struct {
 	RelPath string `json:"path"`
 	Copies  []Copy `json:"copies"`
@@ -83,6 +95,7 @@ func NewScanningLog(startedAt time.Time, roots []string, configured int) (Log, e
 // BuildLog counts each mirror at most once per candidate. Exactly one candidate
 // must have support from more than half of ALL configured mirrors. Disagreement
 // never increases the denominator and multiple qualifying candidates are refused.
+// Type conflicts remain unresolved even when all checksum candidates agree.
 // ErrUnresolved accompanies a valid completed scan containing both safe repairs
 // and every unresolved finding. Other errors do not return a usable log.
 func BuildLog(startedAt, scannedAt time.Time, roots []string, configured int, observations map[string][]Copy) (Log, error) {
@@ -101,12 +114,16 @@ func BuildLog(startedAt, scannedAt time.Time, roots []string, configured int, ob
 		}
 		copies := append([]Copy(nil), observations[path]...)
 		sort.Slice(copies, func(i, j int) bool { return copies[i].Root < copies[j].Root })
-		if err := validateCopies(log.Roots, copies); err != nil {
+		if err := validateCopies(log.Roots, path, copies); err != nil {
 			return Log{}, fmt.Errorf("%s: %w", path, err)
 		}
 		clean := true
 		dataChecksum := ""
 		for _, copy := range copies {
+			if copy.Conflict != nil {
+				clean = false
+				continue
+			}
 			if copy.ActualChecksum == "" {
 				continue // Evidence only; missing data is not a repair target.
 			}
@@ -160,6 +177,9 @@ func unresolvedError(log Log) error {
 func uniqueWinner(copies []Copy, configured int) (string, error) {
 	counts := make(map[string]int)
 	for _, copy := range copies {
+		if copy.Conflict != nil {
+			return "", fmt.Errorf("entry type conflict: %s at %s", copy.Conflict.Kind, filepath.Join(copy.Root, copy.Conflict.RelPath))
+		}
 		if copy.ActualChecksum != "" {
 			counts[copy.ActualChecksum]++
 		}
@@ -247,7 +267,7 @@ func validateLog(log Log) error {
 		if !validChecksum(repair.Checksum) {
 			return fmt.Errorf("invalid repair checksum for %s", repair.RelPath)
 		}
-		if err := validateCopies(log.Roots, repair.Copies); err != nil {
+		if err := validateCopies(log.Roots, repair.RelPath, repair.Copies); err != nil {
 			return err
 		}
 		winner, err := uniqueWinner(repair.Copies, log.ConfiguredMirrors)
@@ -283,16 +303,16 @@ func validateLog(log Log) error {
 		if j < len(log.Repairs) && log.Repairs[j].RelPath == finding.RelPath {
 			return errors.New("unresolved path is also a repair target")
 		}
-		if err := validateCopies(log.Roots, finding.Copies); err != nil {
+		if err := validateCopies(log.Roots, finding.RelPath, finding.Copies); err != nil {
 			return err
 		}
 		if _, err := uniqueWinner(finding.Copies, log.ConfiguredMirrors); err == nil || finding.Reason != err.Error() {
-			return fmt.Errorf("invalid unresolved consensus reason for %s", finding.RelPath)
+			return fmt.Errorf("invalid unresolved refusal reason for %s", finding.RelPath)
 		}
 	}
 	return nil
 }
-func validateCopies(roots []string, copies []Copy) error {
+func validateCopies(roots []string, path string, copies []Copy) error {
 	if len(copies) == 0 {
 		return errors.New("observation has no copies")
 	}
@@ -304,6 +324,25 @@ func validateCopies(roots []string, copies []Copy) error {
 		previous = copy.Root
 		if !containsString(roots, copy.Root) {
 			return fmt.Errorf("copy root is not in logged roots: %s", copy.Root)
+		}
+		if conflict := copy.Conflict; conflict != nil {
+			if copy.ActualChecksum != "" || copy.Sidecar != nil {
+				return errors.New("type conflict also contains checksum evidence")
+			}
+			if err := validateRelativePath(conflict.RelPath); err != nil {
+				return err
+			}
+			switch conflict.Kind {
+			case entryRegular, entryDirectory, entrySymlink:
+			default:
+				return errors.New("unknown conflicting entry type")
+			}
+			ancestor := strings.HasPrefix(path, conflict.RelPath+"/")
+			leaf := conflict.RelPath == path || conflict.RelPath == path+checksumSuffix
+			if (!ancestor && !leaf) || (ancestor && conflict.Kind == entryDirectory) || (leaf && conflict.Kind == entryRegular) {
+				return errors.New("entry type does not obstruct the observed path")
+			}
+			continue
 		}
 		if copy.ActualChecksum == "" {
 			if copy.Sidecar == nil {

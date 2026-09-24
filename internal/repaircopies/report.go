@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 )
 
 func PrintRepairs(writer io.Writer, log Log) error {
@@ -34,6 +35,12 @@ func PrintRepairs(writer io.Writer, log Log) error {
 
 func printCopies(writer io.Writer, copies []Copy) error {
 	for _, copy := range copies {
+		if conflict := copy.Conflict; conflict != nil {
+			if _, err := fmt.Fprintf(writer, "  disk: %s\n    entry type conflict: %s at %s\n", copy.Root, conflict.Kind, filepath.Join(copy.Root, conflict.RelPath)); err != nil {
+				return err
+			}
+			continue
+		}
 		value := "missing"
 		if copy.Sidecar != nil {
 			value = copy.Sidecar.Value

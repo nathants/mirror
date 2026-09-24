@@ -107,7 +107,7 @@ func scan(ctx context.Context, rs *rootfs.Set, progress func(string, string)) (m
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	results := make([]map[string]Copy, len(paths))
+	results := make([]rootScan, len(paths))
 	failures := make([]error, len(paths))
 	var workers sync.WaitGroup
 	var progressLock sync.Mutex
@@ -134,14 +134,49 @@ func scan(ctx context.Context, rs *rootfs.Set, progress func(string, string)) (m
 	}
 	observations := make(map[string][]Copy)
 	for _, result := range results {
-		for path, copy := range result {
-			observations[path] = append(observations[path], copy)
+		for path := range result.copies {
+			observations[path] = nil
+		}
+	}
+	for path := range observations {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		for i, result := range results {
+			if copy, found := result.copies[path]; found {
+				observations[path] = append(observations[path], copy)
+			} else if conflict := result.conflict(path); conflict != nil {
+				observations[path] = append(observations[path], Copy{Root: paths[i], Conflict: conflict})
+			}
 		}
 	}
 	return observations, rs.Check(ctx)
 }
-func scanRoot(ctx context.Context, root *rootfs.Root, progress func(string, string)) (map[string]Copy, error) {
-	observations := make(map[string]Copy)
+
+// Entry types distinguish actual absence from paths obstructed by directories,
+// symlinks, or non-directory ancestors. Only regular data/sidecar observations
+// create candidates; directory-only and symlink-only paths are not repair work.
+type rootScan struct {
+	copies  map[string]Copy
+	entries map[string]string
+}
+
+func (s rootScan) conflict(path string) *TypeConflict {
+	for parent := filepath.Dir(path); parent != "."; parent = filepath.Dir(parent) {
+		if kind := s.entries[parent]; kind != "" && kind != entryDirectory {
+			return &TypeConflict{RelPath: parent, Kind: kind}
+		}
+	}
+	for _, leaf := range []string{path, path + checksumSuffix} {
+		if kind := s.entries[leaf]; kind != "" {
+			return &TypeConflict{RelPath: leaf, Kind: kind}
+		}
+	}
+	return nil
+}
+
+func scanRoot(ctx context.Context, root *rootfs.Root, progress func(string, string)) (rootScan, error) {
+	result := rootScan{copies: make(map[string]Copy), entries: make(map[string]string)}
 	var walk func(string) error
 	walk = func(dir string) error {
 		if err := ctx.Err(); err != nil {
@@ -164,6 +199,7 @@ func scanRoot(ctx context.Context, root *rootfs.Root, progress func(string, stri
 			}
 			switch {
 			case entry.IsDir():
+				result.entries[rel] = entryDirectory
 				if err := walk(rel); err != nil {
 					return err
 				}
@@ -171,8 +207,9 @@ func scanRoot(ctx context.Context, root *rootfs.Root, progress func(string, stri
 				if err := validateDataPath(rel); err != nil {
 					return err
 				}
-				continue
+				result.entries[rel] = entrySymlink
 			case entry.Type().IsRegular():
+				result.entries[rel] = entryRegular
 				if strings.HasSuffix(rel, checksumSuffix) {
 					dataPath := strings.TrimSuffix(rel, checksumSuffix)
 					if err := validateDataPath(dataPath); err != nil {
@@ -193,7 +230,7 @@ func scanRoot(ctx context.Context, root *rootfs.Root, progress func(string, stri
 					if sidecar == nil {
 						return fmt.Errorf("sidecar disappeared during scan: %s", rel)
 					}
-					observations[dataPath] = Copy{Root: root.Path(), Sidecar: sidecar}
+					result.copies[dataPath] = Copy{Root: root.Path(), Sidecar: sidecar}
 					if progress != nil {
 						progress(root.Path(), rel)
 					}
@@ -207,7 +244,7 @@ func scanRoot(ctx context.Context, root *rootfs.Root, progress func(string, stri
 				if err != nil {
 					return err
 				}
-				observations[rel] = Copy{Root: root.Path(), ActualChecksum: actual, Sidecar: sidecar}
+				result.copies[rel] = Copy{Root: root.Path(), ActualChecksum: actual, Sidecar: sidecar}
 				if progress != nil {
 					progress(root.Path(), rel)
 				}
@@ -218,9 +255,9 @@ func scanRoot(ctx context.Context, root *rootfs.Root, progress func(string, stri
 		return nil
 	}
 	if err := walk("."); err != nil {
-		return nil, err
+		return rootScan{}, err
 	}
-	return observations, ctx.Err()
+	return result, ctx.Err()
 }
 
 func ValidateCurrentState(ctx context.Context, log Log, rs *rootfs.Set) error {

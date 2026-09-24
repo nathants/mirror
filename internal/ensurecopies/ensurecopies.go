@@ -105,8 +105,8 @@ func plan(ctx context.Context, roots *rootfs.Set) ([]action, error) {
 	}
 	all := make(map[string]bool)
 	for path, copies := range observations {
-		// Scan also returns sidecar-only repair evidence. It is not an
-		// existing data copy or a source for ensure's publication plan.
+		// Sidecar-only and type-conflict evidence are not data sources.
+		// Destination preflight below still refuses these obstructions.
 		dataCopies := copies[:0]
 		for _, copy := range copies {
 			if copy.ActualChecksum != "" {

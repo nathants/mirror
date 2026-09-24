@@ -54,7 +54,7 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 	}
 	haveLog := false
 	// Registered before guard cleanup: record cleanup failures too, and always
-	// distinguish unresolved consensus from operational failure in the journal.
+	// distinguish unresolved findings from operational failure in the journal.
 	defer func() {
 		if !haveLog {
 			return
