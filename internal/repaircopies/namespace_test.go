@@ -36,7 +36,7 @@ func TestScanRejectsInvalidChecksumNamespace(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if _, err := Scan(context.Background(), []string{root}); err == nil || !strings.Contains(err.Error(), ".b2sum is reserved") {
+			if _, err := Scan(context.Background(), testRoots(t, []string{root})); err == nil || !strings.Contains(err.Error(), ".b2sum is reserved") {
 				t.Fatalf("invalid namespace accepted or unexplained: %v", err)
 			}
 		})
@@ -50,7 +50,7 @@ func TestChecksumSuffixIsNotReservedInDirectoryNames(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeMirrorFile(t, path, []byte("data"), checksumBytes([]byte("data")))
-	observations, err := Scan(context.Background(), []string{root})
+	observations, err := Scan(context.Background(), testRoots(t, []string{root}))
 	if err != nil || len(observations["directory.b2sum/item"]) != 1 {
 		t.Fatalf("directory suffix confused with file metadata: %+v %v", observations, err)
 	}
@@ -64,9 +64,10 @@ func TestChecksumNamedPayloadRejectedAtPublicationAndLogBoundaries(t *testing.T)
 	if err := os.WriteFile(filepath.Join(src, path), []byte("payload"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	rs := testRoots(t, []string{src, dst})
 	for _, publish := range []func() error{
-		func() error { return PublishMissing(ctx, src, dst, path, checksum) },
-		func() error { return PublishMissingSidecar(ctx, src, path, checksum) },
+		func() error { return PublishMissing(ctx, rs.Get(src), rs.Get(dst), path, checksum) },
+		func() error { return PublishMissingSidecar(ctx, rs.Get(src), path, checksum) },
 	} {
 		if err := publish(); err == nil || !strings.Contains(err.Error(), ".b2sum is reserved") {
 			t.Fatalf("publication accepted reserved payload name: %v", err)
@@ -87,7 +88,7 @@ func TestChecksumNamedPayloadRejectedAtPublicationAndLogBoundaries(t *testing.T)
 	}
 	log := Log{Version: LogVersion, Status: StatusPending, StartedAt: now, ScannedAt: now, Roots: []string{src}, ConfiguredMirrors: 1,
 		Repairs: []Repair{{RelPath: path, Checksum: checksum, Copies: observations[path]}}}
-	if err := Apply(ctx, log, []string{src}, false, io.Discard); err == nil || !strings.Contains(err.Error(), ".b2sum is reserved") {
+	if err := Apply(ctx, log, testRoots(t, []string{src}), false, io.Discard); err == nil || !strings.Contains(err.Error(), ".b2sum is reserved") {
 		t.Fatalf("resume accepted reserved payload name: %v", err)
 	}
 }

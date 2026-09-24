@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"mirror/internal/mountdisks"
+	"mirror/internal/rootfs"
 	"mirror/lib"
 )
 
@@ -63,6 +64,12 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 		}
 		returnErr = errors.Join(returnErr, PrintSummary(options.Output, log), unresolvedError(log))
 	}()
+	var roots *rootfs.Set
+	defer func() {
+		if roots != nil {
+			returnErr = errors.Join(returnErr, roots.Close())
+		}
+	}()
 	if resume {
 		loaded, err := Load(logPath)
 		if err != nil {
@@ -91,6 +98,10 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 			return err
 		}
 		log, haveLog = scanning, true
+		roots, err = rootfs.OpenSet(ctx, state.Roots)
+		if err != nil {
+			return err
+		}
 		if _, err := fmt.Fprintf(options.Output, "scanning %d mounted mirrors (%d configured)...\n", len(state.Roots), state.ConfiguredMirrors); err != nil {
 			return err
 		}
@@ -98,7 +109,7 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 		lastReport := time.Now()
 		scanCtx, cancel := context.WithCancel(ctx)
 		var outputErr error
-		observations, err := scan(scanCtx, state.Roots, func(root, path string) {
+		observations, err := scan(scanCtx, roots, func(root, path string) {
 			scannedCount++
 			if outputErr == nil && time.Since(lastReport) >= time.Second {
 				_, outputErr = fmt.Fprintf(options.Output, "scanned %d files; latest %s\n", scannedCount, filepath.Join(root, path))
@@ -137,17 +148,24 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 	if err := checkSnapshot(ctx, log, options.Snapshot); err != nil {
 		return err
 	}
+	if roots == nil {
+		var err error
+		roots, err = rootfs.OpenSet(ctx, log.Roots)
+		if err != nil {
+			return err
+		}
+	}
 	pending := false
 	for _, repair := range log.Repairs {
 		pending = pending || repair.State != RepairCompleted
 	}
 	if !pending {
-		if err := ValidateCurrentState(ctx, log, log.Roots); err != nil {
+		if err := ValidateCurrentState(ctx, log, roots); err != nil {
 			return err
 		}
 	}
 	if preview {
-		if err := apply(ctx, log, log.Roots, true, options.Output, nil); err != nil {
+		if err := apply(ctx, log, roots, true, options.Output, nil); err != nil {
 			return err
 		}
 		_, err := fmt.Fprintln(options.Output, "preview completed; no repairs applied")
@@ -163,15 +181,14 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 		if err := checkSnapshot(ctx, log, options.Snapshot); err != nil {
 			return err
 		}
-		// Pin roots before unlocking and keep ownership until cleanup finishes.
-		if err := ValidateCurrentState(ctx, log, log.Roots); err != nil {
+		// Validate through the same roots retained for scanning and cleanup.
+		if err := ValidateCurrentState(ctx, log, roots); err != nil {
 			return err
 		}
-		guard, err := lib.OpenDirectoryGuard(ctx, log.Roots, log.Roots)
+		guard, err := lib.NewDirectoryGuard(ctx, roots, log.Roots)
 		if err != nil {
 			return err
 		}
-		defer func() { returnErr = errors.Join(returnErr, guard.Close()) }()
 		if err := checkSnapshot(ctx, log, options.Snapshot); err != nil {
 			return err
 		}
@@ -201,7 +218,7 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 			log = next
 			return nil
 		}
-		if err := apply(ctx, log, log.Roots, false, options.Output, checkpoint); err != nil {
+		if err := apply(ctx, log, roots, false, options.Output, checkpoint); err != nil {
 			return err
 		}
 	}

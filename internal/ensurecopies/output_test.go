@@ -21,12 +21,13 @@ func TestApplyStopsOnOutputFailure(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			actions, err := plan(context.Background(), []string{root})
+			rs := testRoots(t, []string{root})
+			actions, err := plan(context.Background(), rs)
 			if err != nil {
 				t.Fatal(err)
 			}
 			outputErr := errors.New("output unavailable")
-			if err := apply(context.Background(), actions, preview, failedOutput{outputErr}); !errors.Is(err, outputErr) {
+			if err := apply(context.Background(), rs, actions, preview, failedOutput{outputErr}); !errors.Is(err, outputErr) {
 				t.Fatalf("lost output error: %v", err)
 			}
 			_, err = os.Stat(filepath.Join(root, "a.b2sum"))

@@ -58,7 +58,7 @@ func TestRepairRevalidatesPreviouslyAbsentCopies(t *testing.T) {
 					added = true
 					if phase != "completion" {
 						// The new vote makes both X and Y strict majorities.
-						observations, err := Scan(ctx, roots)
+						observations, err := Scan(ctx, testRoots(t, roots))
 						if err != nil {
 							t.Fatal(err)
 						}

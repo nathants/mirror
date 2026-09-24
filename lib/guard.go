@@ -10,75 +10,37 @@ import (
 	"mirror/internal/rootfs"
 )
 
-// DirectoryGuard owns one descriptor per mirror root from preflight through
-// cleanup. All roots retain identity checks; only destinations receive chmods.
-// Directory traversal uses the original filesystems, not reopened root paths;
-// only normal mutations require those paths to remain attached too.
+// DirectoryGuard borrows the operation's root descriptors through cleanup.
+// All roots retain identity checks; only destinations receive chmods. The owner
+// must keep the set open until Relock returns, even after root pathname loss.
 type DirectoryGuard struct {
-	roots        []*rootfs.Root
+	roots        *rootfs.Set
 	destinations []*rootfs.Root
 }
 
-// OpenDirectoryGuard pins paths and selects the subset whose directory modes
-// may change. Empty destinations means no chmods, not all roots. Pass paths as
-// destinations for an operation that mutates all roots.
-func OpenDirectoryGuard(ctx context.Context, paths, destinations []string) (*DirectoryGuard, error) {
-	if len(paths) == 0 {
-		return nil, errors.New("directory guard requires mirror roots")
+// NewDirectoryGuard selects the subset whose directory modes may change.
+// Empty destinations means no chmods, not all roots.
+func NewDirectoryGuard(ctx context.Context, roots *rootfs.Set, destinations []string) (*DirectoryGuard, error) {
+	if err := roots.Check(ctx); err != nil {
+		return nil, err
 	}
-	selected := make(map[string]bool, len(paths))
-	for _, path := range paths {
-		selected[path] = false
-	}
+	guard := &DirectoryGuard{roots: roots}
+	selected := make(map[string]bool)
 	for _, path := range destinations {
-		if _, found := selected[path]; !found {
+		root := roots.Get(path)
+		if root == nil {
 			return nil, fmt.Errorf("directory guard destination is not a mirror root: %s", path)
 		}
-		selected[path] = true
-	}
-	guard := &DirectoryGuard{}
-	for _, path := range paths {
-		if err := ctx.Err(); err != nil {
-			return nil, errors.Join(err, guard.Close())
-		}
-		root, err := rootfs.Open(path)
-		if err != nil {
-			return nil, errors.Join(err, guard.Close())
-		}
-		guard.roots = append(guard.roots, root)
-		if selected[path] {
+		if !selected[path] {
 			guard.destinations = append(guard.destinations, root)
-		}
-		if err := root.CheckInternal(); err != nil {
-			return nil, errors.Join(err, guard.Close())
+			selected[path] = true
 		}
 	}
 	return guard, nil
 }
 
-func (g *DirectoryGuard) Close() error {
-	var failures []error
-	for _, root := range g.roots {
-		failures = append(failures, root.Close())
-	}
-	g.roots = nil
-	g.destinations = nil
-	return errors.Join(failures...)
-}
-
 func (g *DirectoryGuard) Check(ctx context.Context) error {
-	if len(g.roots) == 0 {
-		return os.ErrClosed
-	}
-	for _, root := range g.roots {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if err := root.Check(); err != nil {
-			return err
-		}
-	}
-	return ctx.Err()
+	return g.roots.Check(ctx)
 }
 
 // SetLocked is for normal lock/unlock operations. Revalidate every root before
@@ -94,9 +56,6 @@ func (g *DirectoryGuard) SetLocked(ctx context.Context, locked bool) error {
 // if their mount paths disappeared. Drift of any root is still reported, but
 // never redirects cleanup or prevents an attempt to relock all destinations.
 func (g *DirectoryGuard) Relock(ctx context.Context) error {
-	if len(g.roots) == 0 {
-		return os.ErrClosed
-	}
 	return errors.Join(g.Check(ctx), g.setLocked(ctx, true, true), g.Check(ctx))
 }
 

@@ -35,7 +35,7 @@ func TestReviewResumeRejectsSymlinkAncestor(t *testing.T) {
 	if err := os.Symlink(outside, filepath.Join(b, "books")); err != nil {
 		t.Fatal(err)
 	}
-	err = Apply(context.Background(), log, []string{a, b}, false, io.Discard)
+	err = Apply(context.Background(), log, testRoots(t, []string{a, b}), false, io.Discard)
 	got, readErr := os.ReadFile(filepath.Join(outside, "item"))
 	if readErr != nil {
 		t.Fatal(readErr)
@@ -92,7 +92,7 @@ func TestReviewCompletionRequiresDesiredBytes(t *testing.T) {
 		t.Fatal(err)
 	}
 	writer := &restoreScannedBytes{path: filepath.Join(b, "item")}
-	if err := Apply(context.Background(), log, []string{a, b}, false, writer); err == nil {
+	if err := Apply(context.Background(), log, testRoots(t, []string{a, b}), false, writer); err == nil {
 		t.Fatal("Apply reported completion with original corrupt bytes restored")
 	}
 }

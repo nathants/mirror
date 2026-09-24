@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"mirror/internal/mountdisks"
+	"mirror/internal/rootfs"
 	"mirror/internal/system"
 )
 
@@ -30,11 +31,15 @@ func LockDirs(ctx context.Context, home string, locked bool) (returnErr error) {
 	if err != nil {
 		return err
 	}
-	guard, err := OpenDirectoryGuard(ctx, state.Roots, state.Roots)
+	roots, err := rootfs.OpenSet(ctx, state.Roots)
 	if err != nil {
 		return err
 	}
-	defer func() { returnErr = errors.Join(returnErr, guard.Close()) }()
+	defer func() { returnErr = errors.Join(returnErr, roots.Close()) }()
+	guard, err := NewDirectoryGuard(ctx, roots, state.Roots)
+	if err != nil {
+		return err
+	}
 	// Inventory again after pinning descriptors, before any chmod.
 	current, err := MountedMirrorState(ctx, home)
 	if err != nil {

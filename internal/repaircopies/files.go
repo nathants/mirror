@@ -17,29 +17,6 @@ import (
 	"mirror/internal/rootfs"
 )
 
-type roots map[string]*rootfs.Root
-
-func openRoots(paths []string) (roots, error) {
-	result := make(roots)
-	for _, path := range paths {
-		r, err := rootfs.Open(path)
-		if err != nil {
-			result.close()
-			return nil, err
-		}
-		result[path] = r
-		if err := r.CheckInternal(); err != nil {
-			result.close()
-			return nil, err
-		}
-	}
-	return result, nil
-}
-func (r roots) close() {
-	for _, root := range r {
-		_ = root.Close()
-	}
-}
 func openRegular(root *rootfs.Root, path string) (*os.File, error) {
 	f, err := root.OpenFile(path, unix.O_RDONLY|unix.O_NONBLOCK, 0)
 	if err != nil {
@@ -114,22 +91,20 @@ func readSidecar(ctx context.Context, root *rootfs.Root, path string) (*Sidecar,
 
 // Scan is read-only, including when metadata is missing or malformed. It does
 // not generate a checksum sidecar, chmod data, or admit quarantine/temporary files.
-func Scan(ctx context.Context, paths []string) (map[string][]Copy, error) {
-	return scan(ctx, paths, nil)
+func Scan(ctx context.Context, rs *rootfs.Set) (map[string][]Copy, error) {
+	return scan(ctx, rs, nil)
 }
 
 // Keep one sequential reader per disk, while scanning independent disks in
 // parallel. On any error all readers are cancelled and joined before returning.
-func scan(ctx context.Context, paths []string, progress func(string, string)) (map[string][]Copy, error) {
-	paths = canonicalStrings(paths)
+func scan(ctx context.Context, rs *rootfs.Set, progress func(string, string)) (map[string][]Copy, error) {
+	paths := rs.Paths()
 	if err := validateCanonicalRoots(paths); err != nil {
 		return nil, err
 	}
-	rs, err := openRoots(paths)
-	if err != nil {
+	if err := rs.Check(ctx); err != nil {
 		return nil, err
 	}
-	defer rs.close()
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	results := make([]map[string]Copy, len(paths))
@@ -151,7 +126,7 @@ func scan(ctx context.Context, paths []string, progress func(string, string)) (m
 			if failures[i] != nil {
 				cancel()
 			}
-		}(i, rs[path])
+		}(i, rs.Get(path))
 	}
 	workers.Wait()
 	if err := errors.Join(failures...); err != nil {
@@ -163,7 +138,7 @@ func scan(ctx context.Context, paths []string, progress func(string, string)) (m
 			observations[path] = append(observations[path], copy)
 		}
 	}
-	return observations, ctx.Err()
+	return observations, rs.Check(ctx)
 }
 func scanRoot(ctx context.Context, root *rootfs.Root, progress func(string, string)) (map[string]Copy, error) {
 	observations := make(map[string]Copy)
@@ -248,29 +223,27 @@ func scanRoot(ctx context.Context, root *rootfs.Root, progress func(string, stri
 	return observations, ctx.Err()
 }
 
-func ValidateCurrentState(ctx context.Context, log Log, currentRoots []string) error {
-	rs, err := prepare(log, currentRoots)
-	if err != nil {
+func ValidateCurrentState(ctx context.Context, log Log, rs *rootfs.Set) error {
+	if err := prepare(ctx, log, rs); err != nil {
 		return err
 	}
-	defer rs.close()
 	return validateFiles(ctx, log, rs, false)
 }
-func prepare(log Log, currentRoots []string) (roots, error) {
+func prepare(ctx context.Context, log Log, rs *rootfs.Set) error {
 	if err := validateLog(log); err != nil {
-		return nil, err
+		return err
 	}
 	if log.Status != StatusUnresolved {
 		if err := RequirePending(log); err != nil {
-			return nil, err
+			return err
 		}
 	}
-	if !equalStrings(log.Roots, canonicalStrings(currentRoots)) {
-		return nil, fmt.Errorf("mounted roots changed since the logged scan: logged %v, current %v", log.Roots, currentRoots)
+	if !equalStrings(log.Roots, rs.Paths()) {
+		return fmt.Errorf("mounted roots changed since the logged scan: logged %v, current %v", log.Roots, rs.Paths())
 	}
-	return openRoots(log.Roots)
+	return rs.Check(ctx)
 }
-func validateFiles(ctx context.Context, log Log, rs roots, complete bool) error {
+func validateFiles(ctx context.Context, log Log, rs *rootfs.Set, complete bool) error {
 	for _, repair := range log.Repairs {
 		if err := validateRepair(ctx, repair, rs, complete || repair.State == RepairCompleted); err != nil {
 			return err
@@ -279,7 +252,7 @@ func validateFiles(ctx context.Context, log Log, rs roots, complete bool) error 
 	return ctx.Err()
 }
 
-func validateRepair(ctx context.Context, repair Repair, rs roots, complete bool) error {
+func validateRepair(ctx context.Context, repair Repair, rs *rootfs.Set, complete bool) error {
 	observed := make(map[string]bool, len(repair.Copies))
 	for _, copy := range repair.Copies {
 		observed[copy.Root] = true
@@ -287,7 +260,8 @@ func validateRepair(ctx context.Context, repair Repair, rs roots, complete bool)
 	// An omitted mounted mirror supplied no evidence for this path. New data
 	// or metadata could change consensus; neither may appear during resume,
 	// application, or completion without a fresh scan.
-	for path, root := range rs {
+	for _, path := range rs.Paths() {
+		root := rs.Get(path)
 		if observed[path] {
 			continue
 		}
@@ -303,7 +277,7 @@ func validateRepair(ctx context.Context, repair Repair, rs roots, complete bool)
 	}
 	hasSource := false
 	for _, copy := range repair.Copies {
-		root := rs[copy.Root]
+		root := rs.Get(copy.Root)
 		if copy.ActualChecksum == "" {
 			if err := validateEvidenceOnly(ctx, root, repair.RelPath, copy.Sidecar); err != nil {
 				return err
@@ -453,20 +427,13 @@ func CheckMissingDestination(ctx context.Context, root *rootfs.Root, path string
 
 // PublishMissing is the ensure-copies publication path: no existing data or
 // metadata may be replaced, and the copied bytes must match the planned hash.
-func PublishMissing(ctx context.Context, source, destination, path, checksum string) error {
+func PublishMissing(ctx context.Context, src, dst *rootfs.Root, path, checksum string) error {
 	if err := validateDataPath(path); err != nil {
 		return err
 	}
-	src, err := rootfs.Open(source)
-	if err != nil {
+	if err := src.Check(); err != nil {
 		return err
 	}
-	defer src.Close()
-	dst, err := rootfs.Open(destination)
-	if err != nil {
-		return err
-	}
-	defer dst.Close()
 	if err := CheckMissingDestination(ctx, dst, path); err != nil {
 		return err
 	}
@@ -476,7 +443,7 @@ func PublishMissing(ctx context.Context, source, destination, path, checksum str
 	if err := dst.MkdirAll(filepath.Dir(path), 0755); err != nil {
 		return err
 	}
-	_, err = replace(ctx, dst, path, "", checksum, func(file *os.File) error {
+	_, err := replace(ctx, dst, path, "", checksum, func(file *os.File) error {
 		input, err := openRegular(src, path)
 		if err != nil {
 			return err
@@ -487,20 +454,15 @@ func PublishMissing(ctx context.Context, source, destination, path, checksum str
 	if err != nil {
 		return err
 	}
-	return PublishMissingSidecar(ctx, destination, path, checksum)
+	return PublishMissingSidecar(ctx, dst, path, checksum)
 }
-func PublishMissingSidecar(ctx context.Context, rootPath, path, checksum string) error {
+func PublishMissingSidecar(ctx context.Context, root *rootfs.Root, path, checksum string) error {
 	if err := validateDataPath(path); err != nil {
 		return err
 	}
 	if !validChecksum(checksum) {
 		return errors.New("invalid checksum")
 	}
-	root, err := rootfs.Open(rootPath)
-	if err != nil {
-		return err
-	}
-	defer root.Close()
 	actual, err := checksumFile(ctx, root, path)
 	if err != nil {
 		return err

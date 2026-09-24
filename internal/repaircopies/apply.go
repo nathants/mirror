@@ -15,21 +15,19 @@ import (
 // Apply requires prior operator confirmation. It validates every safe repair
 // before mutation, never applies unresolved findings, and reports their presence
 // even when the safe subset succeeds. The CLI uses apply with durable checkpoints.
-func Apply(ctx context.Context, log Log, currentRoots []string, preview bool, writer io.Writer) error {
-	return errors.Join(apply(ctx, log, currentRoots, preview, writer, nil), unresolvedError(log))
+func Apply(ctx context.Context, log Log, rs *rootfs.Set, preview bool, writer io.Writer) error {
+	return errors.Join(apply(ctx, log, rs, preview, writer, nil), unresolvedError(log))
 }
 
 // A checkpoint must durably record starts before any publication for that file.
 // A failed checkpoint or operational error stops all subsequent repairs.
-func apply(ctx context.Context, log Log, currentRoots []string, preview bool, writer io.Writer, checkpoint func(int, string, error) error) error {
+func apply(ctx context.Context, log Log, rs *rootfs.Set, preview bool, writer io.Writer, checkpoint func(int, string, error) error) error {
 	if writer == nil {
 		return errors.New("repair output is required")
 	}
-	rs, err := prepare(log, currentRoots)
-	if err != nil {
+	if err := prepare(ctx, log, rs); err != nil {
 		return err
 	}
-	defer rs.close()
 	if err := validateFiles(ctx, log, rs, false); err != nil {
 		return err
 	}
@@ -68,7 +66,7 @@ func apply(ctx context.Context, log Log, currentRoots []string, preview bool, wr
 	return ctx.Err()
 }
 
-func applyRepair(ctx context.Context, repair Repair, rs roots, preview bool, writer io.Writer) error {
+func applyRepair(ctx context.Context, repair Repair, rs *rootfs.Set, preview bool, writer io.Writer) error {
 	// Recheck the complete file's evidence immediately before its first mutation.
 	if err := validateRepair(ctx, repair, rs, false); err != nil {
 		return err
@@ -78,12 +76,12 @@ func applyRepair(ctx context.Context, repair Repair, rs roots, preview bool, wri
 		if copy.ActualChecksum == "" {
 			continue
 		}
-		actual, err := checksumFile(ctx, rs[copy.Root], repair.RelPath)
+		actual, err := checksumFile(ctx, rs.Get(copy.Root), repair.RelPath)
 		if err != nil {
 			return err
 		}
 		if actual == repair.Checksum {
-			source = rs[copy.Root]
+			source = rs.Get(copy.Root)
 			break
 		}
 	}
@@ -94,7 +92,7 @@ func applyRepair(ctx context.Context, repair Repair, rs roots, preview bool, wri
 		if copy.ActualChecksum == "" {
 			continue // Preserve evidence-only sidecars; never fill missing data.
 		}
-		root := rs[copy.Root]
+		root := rs.Get(copy.Root)
 		actual, err := checksumFile(ctx, root, repair.RelPath)
 		if err != nil {
 			return err

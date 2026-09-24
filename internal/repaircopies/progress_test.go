@@ -194,7 +194,7 @@ func TestOnlyUnresolvedFindingsRemainReportableOnResume(t *testing.T) {
 
 func TestUnresolvedEvidenceLogRoundTripAndValidation(t *testing.T) {
 	home, roots, _ := partialFixture(t)
-	observations, err := Scan(context.Background(), roots)
+	observations, err := Scan(context.Background(), testRoots(t, roots))
 	if err != nil {
 		t.Fatal(err)
 	}

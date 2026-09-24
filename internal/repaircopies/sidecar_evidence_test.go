@@ -22,7 +22,7 @@ func TestOrphanSidecarMakesRepairAmbiguous(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(roots[2], "item.b2sum"), []byte(y), 0600); err != nil {
 		t.Fatal(err)
 	}
-	observations, err := Scan(context.Background(), roots)
+	observations, err := Scan(context.Background(), testRoots(t, roots))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,7 +51,7 @@ func sidecarEvidenceFixture(t *testing.T) (Log, []string) {
 	}
 	writeMirrorFile(t, filepath.Join(roots[1], "item"), []byte("good"), good)
 	writeMirrorFile(t, filepath.Join(roots[2], "item"), []byte("bad"), checksumBytes([]byte("wrong")))
-	observations, err := Scan(context.Background(), roots)
+	observations, err := Scan(context.Background(), testRoots(t, roots))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,17 +86,17 @@ func TestSidecarOnlyEvidenceSurvivesLogResumeAndCompletion(t *testing.T) {
 	if !strings.Contains(report.String(), "missing (sidecar evidence only; not a repair target)") {
 		t.Fatalf("report conceals missing data: %s", report.String())
 	}
-	if err := Apply(context.Background(), loaded, roots, true, io.Discard); err != nil {
+	if err := Apply(context.Background(), loaded, testRoots(t, roots), true, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if data, err := os.ReadFile(filepath.Join(roots[2], "item")); err != nil || string(data) != "bad" {
 		t.Fatal("preview changed data")
 	}
 	for range 2 { // Desired target state remains resumable; evidence stays unchanged.
-		if err := ValidateCurrentState(context.Background(), loaded, roots); err != nil {
+		if err := ValidateCurrentState(context.Background(), loaded, testRoots(t, roots)); err != nil {
 			t.Fatal(err)
 		}
-		if err := Apply(context.Background(), loaded, roots, false, io.Discard); err != nil {
+		if err := Apply(context.Background(), loaded, testRoots(t, roots), false, io.Discard); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -147,10 +147,10 @@ func TestSidecarOnlyEvidenceDriftRejectsResumeBeforeMutation(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := ValidateCurrentState(context.Background(), log, roots); err == nil {
+			if err := ValidateCurrentState(context.Background(), log, testRoots(t, roots)); err == nil {
 				t.Fatal("resume accepted evidence drift")
 			}
-			if err := Apply(context.Background(), log, roots, false, io.Discard); err == nil {
+			if err := Apply(context.Background(), log, testRoots(t, roots), false, io.Discard); err == nil {
 				t.Fatal("apply accepted evidence drift")
 			}
 			if data, err := os.ReadFile(filepath.Join(roots[2], "item")); err != nil || string(data) != "bad" {
@@ -221,7 +221,7 @@ func (w changeEvidenceAfterRepair) Write(data []byte) (int, error) {
 func TestCompletionRevalidatesSidecarOnlyEvidence(t *testing.T) {
 	log, roots := sidecarEvidenceFixture(t)
 	writer := changeEvidenceAfterRepair{path: filepath.Join(roots[0], "item.b2sum")}
-	if err := Apply(context.Background(), log, roots, false, writer); err == nil || !strings.Contains(err.Error(), "sidecar-only evidence changed") {
+	if err := Apply(context.Background(), log, testRoots(t, roots), false, writer); err == nil || !strings.Contains(err.Error(), "sidecar-only evidence changed") {
 		t.Fatalf("completed with changed evidence: %v", err)
 	}
 }
@@ -241,7 +241,7 @@ func TestMalformedSidecarOnlyEvidenceIsPreservedWithoutVoting(t *testing.T) {
 	if err := os.WriteFile(damagedSidecar, []byte(log.Repairs[0].Checksum), 0600); err != nil {
 		t.Fatal(err)
 	}
-	observations, err := Scan(context.Background(), roots)
+	observations, err := Scan(context.Background(), testRoots(t, roots))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestMalformedSidecarOnlyEvidenceIsPreservedWithoutVoting(t *testing.T) {
 	if copy := log.Repairs[0].Copies[0]; copy.Sidecar == nil || copy.Sidecar.Value != "" || copy.Sidecar.Hash != checksumBytes([]byte("malformed")) {
 		t.Fatalf("malformed evidence lost or promoted to a vote: %+v", copy)
 	}
-	if err := Apply(context.Background(), log, roots, false, io.Discard); err != nil {
+	if err := Apply(context.Background(), log, testRoots(t, roots), false, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if data, err := os.ReadFile(path); err != nil || string(data) != "malformed" {

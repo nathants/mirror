@@ -20,7 +20,8 @@ func TestEnsureRejectsChecksumOnlyPathWithoutDataSource(t *testing.T) {
 			if err := os.WriteFile(path, []byte(contents), 0600); err != nil {
 				t.Fatal(err)
 			}
-			actions, err := plan(context.Background(), roots)
+			rs := testRoots(t, roots)
+			actions, err := plan(context.Background(), rs)
 			if err == nil || !strings.Contains(err.Error(), ".b2sum is reserved") || !strings.Contains(err.Error(), "database") || !strings.Contains(err.Error(), "no data source") {
 				t.Fatalf("checksum-named payload silently omitted: actions=%+v err=%v", actions, err)
 			}
@@ -44,7 +45,7 @@ func TestEnsureRejectsChecksumNamedSymlink(t *testing.T) {
 	if err := os.Symlink("../target", filepath.Join(roots[0], "link.b2sum")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := plan(context.Background(), roots); err == nil || !strings.Contains(err.Error(), ".b2sum is reserved") {
+	if _, err := plan(context.Background(), testRoots(t, roots)); err == nil || !strings.Contains(err.Error(), ".b2sum is reserved") {
 		t.Fatalf("checksum-named symlink accepted as payload: %v", err)
 	}
 }

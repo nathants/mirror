@@ -43,12 +43,17 @@ func Run(ctx context.Context, preview bool, options Options) (returnErr error) {
 	if err != nil {
 		return err
 	}
-	actions, err := plan(ctx, state.Roots)
+	roots, err := rootfs.OpenSet(ctx, state.Roots)
+	if err != nil {
+		return err
+	}
+	defer func() { returnErr = errors.Join(returnErr, roots.Close()) }()
+	actions, err := plan(ctx, roots)
 	if err != nil {
 		return err
 	}
 	if preview {
-		return apply(ctx, actions, true, options.Output)
+		return apply(ctx, roots, actions, true, options.Output)
 	}
 	if len(actions) == 0 {
 		return ctx.Err()
@@ -65,11 +70,10 @@ func Run(ctx context.Context, preview bool, options Options) (returnErr error) {
 			destinations = append(destinations, root)
 		}
 	}
-	guard, err := lib.OpenDirectoryGuard(ctx, state.Roots, destinations)
+	guard, err := lib.NewDirectoryGuard(ctx, roots, destinations)
 	if err != nil {
 		return err
 	}
-	defer func() { returnErr = errors.Join(returnErr, guard.Close()) }()
 	current, err := options.Snapshot(ctx)
 	if err != nil {
 		return err
@@ -85,22 +89,17 @@ func Run(ctx context.Context, preview bool, options Options) (returnErr error) {
 	if err := guard.SetLocked(ctx, false); err != nil {
 		return err
 	}
-	return apply(ctx, actions, false, options.Output)
+	return apply(ctx, roots, actions, false, options.Output)
 }
-func plan(ctx context.Context, paths []string) ([]action, error) {
-	observations, err := repaircopies.Scan(ctx, paths)
+func plan(ctx context.Context, roots *rootfs.Set) ([]action, error) {
+	observations, err := repaircopies.Scan(ctx, roots)
 	if err != nil {
 		return nil, err
 	}
+	paths := roots.Paths()
 	links := make(map[string]map[string]string)
 	for _, path := range paths {
-		root, err := rootfs.Open(path)
-		if err != nil {
-			return nil, err
-		}
-		err = scanLinks(ctx, root, ".", links)
-		closeErr := root.Close()
-		if err := errors.Join(err, closeErr); err != nil {
+		if err := scanLinks(ctx, roots.Get(path), ".", links); err != nil {
 			return nil, err
 		}
 	}
@@ -174,10 +173,7 @@ func plan(ctx context.Context, paths []string) ([]action, error) {
 			if present[destination] {
 				continue
 			}
-			root, err := rootfs.Open(destination)
-			if err != nil {
-				return nil, err
-			}
+			root := roots.Get(destination)
 			if target == nil {
 				err = repaircopies.CheckMissingDestination(ctx, root, path)
 			} else {
@@ -188,11 +184,14 @@ func plan(ctx context.Context, paths []string) ([]action, error) {
 					err = fmt.Errorf("unexpected destination entry %s: %w", filepath.Join(destination, path), errors.Join(err, errors.New("not absent")))
 				}
 			}
-			if err := errors.Join(err, root.Close()); err != nil {
+			if err != nil {
 				return nil, err
 			}
 			actions = append(actions, action{source: source, destination: destination, path: path, checksum: checksum, target: target})
 		}
+	}
+	if err := roots.Check(ctx); err != nil {
+		return nil, err
 	}
 	return actions, nil
 }
@@ -230,9 +229,9 @@ func scanLinks(ctx context.Context, root *rootfs.Root, dir string, links map[str
 	}
 	return nil
 }
-func apply(ctx context.Context, actions []action, preview bool, writer io.Writer) error {
+func apply(ctx context.Context, roots *rootfs.Set, actions []action, preview bool, writer io.Writer) error {
 	for _, a := range actions {
-		if err := ctx.Err(); err != nil {
+		if err := roots.Check(ctx); err != nil {
 			return err
 		}
 		if preview {
@@ -244,11 +243,11 @@ func apply(ctx context.Context, actions []action, preview bool, writer io.Writer
 		var err error
 		switch {
 		case a.metadata:
-			err = repaircopies.PublishMissingSidecar(ctx, a.destination, a.path, a.checksum)
+			err = repaircopies.PublishMissingSidecar(ctx, roots.Get(a.destination), a.path, a.checksum)
 		case a.target != nil:
-			err = publishLink(ctx, a)
+			err = publishLink(ctx, roots, a)
 		default:
-			err = repaircopies.PublishMissing(ctx, a.source, a.destination, a.path, a.checksum)
+			err = repaircopies.PublishMissing(ctx, roots.Get(a.source), roots.Get(a.destination), a.path, a.checksum)
 		}
 		if err != nil {
 			return err
@@ -259,12 +258,8 @@ func apply(ctx context.Context, actions []action, preview bool, writer io.Writer
 	}
 	return ctx.Err()
 }
-func publishLink(ctx context.Context, a action) error {
-	src, err := rootfs.Open(a.source)
-	if err != nil {
-		return err
-	}
-	defer src.Close()
+func publishLink(ctx context.Context, roots *rootfs.Set, a action) error {
+	src := roots.Get(a.source)
 	target, err := src.Readlink(a.path)
 	if err != nil {
 		return err
@@ -272,11 +267,7 @@ func publishLink(ctx context.Context, a action) error {
 	if target != *a.target {
 		return errors.New("source symlink changed")
 	}
-	dst, err := rootfs.Open(a.destination)
-	if err != nil {
-		return err
-	}
-	defer dst.Close()
+	dst := roots.Get(a.destination)
 	if err := ctx.Err(); err != nil {
 		return err
 	}

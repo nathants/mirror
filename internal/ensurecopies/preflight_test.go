@@ -40,7 +40,8 @@ func TestEnsureSidecarCollisionFailsCompletePreflight(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			actions, err := plan(context.Background(), roots)
+			rs := testRoots(t, roots)
+			actions, err := plan(context.Background(), rs)
 			if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "must be absent") {
 				t.Fatalf("known sidecar obstruction missed before publication: %d actions, err=%v", len(actions), err)
 			}
@@ -71,7 +72,8 @@ func TestEnsurePublicationStillRejectsSidecarAppearingAfterPlan(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(roots[0], "item"), []byte("payload"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	actions, err := plan(context.Background(), roots)
+	rs := testRoots(t, roots)
+	actions, err := plan(context.Background(), rs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +81,7 @@ func TestEnsurePublicationStillRejectsSidecarAppearingAfterPlan(t *testing.T) {
 	if err := os.WriteFile(path, []byte("new evidence"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if err := apply(context.Background(), actions, false, io.Discard); err == nil || !strings.Contains(err.Error(), path) {
+	if err := apply(context.Background(), rs, actions, false, io.Discard); err == nil || !strings.Contains(err.Error(), path) {
 		t.Fatalf("publication trusted stale preflight: %v", err)
 	}
 	if _, err := os.Lstat(filepath.Join(roots[1], "item")); !errors.Is(err, os.ErrNotExist) {
@@ -100,11 +102,12 @@ func TestEnsureSymlinkDoesNotReserveAnUnusedSidecarDestination(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(roots[1], "link.b2sum"), 0700); err != nil {
 		t.Fatal(err)
 	}
-	actions, err := plan(context.Background(), roots)
+	rs := testRoots(t, roots)
+	actions, err := plan(context.Background(), rs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := apply(context.Background(), actions, false, io.Discard); err != nil {
+	if err := apply(context.Background(), rs, actions, false, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	target, err := os.Readlink(filepath.Join(roots[1], "link"))

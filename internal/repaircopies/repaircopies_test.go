@@ -192,11 +192,11 @@ func TestValidateAndApplyPendingRepairPreservesCorruptEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateCurrentState(context.Background(), log, []string{rootA, rootB, rootC}); err != nil {
+	if err := ValidateCurrentState(context.Background(), log, testRoots(t, []string{rootA, rootB, rootC})); err != nil {
 		t.Fatalf("ValidateCurrentState before apply: %v", err)
 	}
 	var output strings.Builder
-	if err := Apply(context.Background(), log, []string{rootA, rootB, rootC}, false, &output); err != nil {
+	if err := Apply(context.Background(), log, testRoots(t, []string{rootA, rootB, rootC}), false, &output); err != nil {
 		t.Fatalf("Apply: %v", err)
 	}
 	destination := filepath.Join(rootC, "books", "item")
@@ -212,7 +212,7 @@ func TestValidateAndApplyPendingRepairPreservesCorruptEvidence(t *testing.T) {
 	}
 	// A killed partially completed run is resumable: desired-state copies are
 	// accepted as well as their exact logged pre-repair values.
-	if err := ValidateCurrentState(context.Background(), log, []string{rootA, rootB, rootC}); err != nil {
+	if err := ValidateCurrentState(context.Background(), log, testRoots(t, []string{rootA, rootB, rootC})); err != nil {
 		t.Fatalf("ValidateCurrentState after apply: %v", err)
 	}
 }
@@ -242,7 +242,7 @@ func TestValidateCurrentStateRejectsRootOrFileDrift(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateCurrentState(context.Background(), log, []string{rootA}); err == nil || !strings.Contains(err.Error(), "mounted roots changed") {
+	if err := ValidateCurrentState(context.Background(), log, testRoots(t, []string{rootA})); err == nil || !strings.Contains(err.Error(), "mounted roots changed") {
 		t.Fatalf("root drift error = %v", err)
 	}
 	drifted := filepath.Join(rootB, "item")
@@ -252,7 +252,7 @@ func TestValidateCurrentStateRejectsRootOrFileDrift(t *testing.T) {
 	if err := os.WriteFile(drifted, []byte("different"), 0o444); err != nil {
 		t.Fatal(err)
 	}
-	if err := ValidateCurrentState(context.Background(), log, []string{rootA, rootB}); err == nil || !strings.Contains(err.Error(), "changed since the logged scan") {
+	if err := ValidateCurrentState(context.Background(), log, testRoots(t, []string{rootA, rootB})); err == nil || !strings.Contains(err.Error(), "changed since the logged scan") {
 		t.Fatalf("file drift error = %v", err)
 	}
 }
@@ -323,7 +323,7 @@ func TestApplyPreviewDoesNotMutate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Apply(context.Background(), log, []string{rootA, rootB}, true, io.Discard); err != nil {
+	if err := Apply(context.Background(), log, testRoots(t, []string{rootA, rootB}), true, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := os.ReadFile(filepath.Join(rootB, "item")); err != nil || string(got) != string(badData) {
@@ -357,7 +357,7 @@ func TestApplyRepairsCorruptSidecarAndPreservesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Apply(context.Background(), log, []string{rootA, rootB}, false, io.Discard); err != nil {
+	if err := Apply(context.Background(), log, testRoots(t, []string{rootA, rootB}), false, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	sidecar := filepath.Join(rootB, "item") + checksumSuffix
@@ -416,4 +416,18 @@ func quarantined(t *testing.T, root, path string) string {
 		t.Fatalf("expected exactly one quarantine record for %s: %v", path, found)
 	}
 	return found[0]
+}
+
+func testRoots(t *testing.T, paths []string) *rootfs.Set {
+	t.Helper()
+	roots, err := rootfs.OpenSet(context.Background(), paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := roots.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return roots
 }

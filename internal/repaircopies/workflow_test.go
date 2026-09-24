@@ -72,7 +72,7 @@ func TestScanAndRepairMissingMalformedMetadataWithoutIngest(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			observations, err := Scan(context.Background(), roots)
+			observations, err := Scan(context.Background(), testRoots(t, roots))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -89,7 +89,7 @@ func TestScanAndRepairMissingMalformedMetadataWithoutIngest(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := Apply(context.Background(), log, roots, false, io.Discard); err != nil {
+			if err := Apply(context.Background(), log, testRoots(t, roots), false, io.Discard); err != nil {
 				t.Fatal(err)
 			}
 			after, err := os.ReadFile(path)
@@ -117,7 +117,7 @@ func TestScanAndRepairMissingMalformedMetadataWithoutIngest(t *testing.T) {
 			}
 			temp.Close()
 			root.Close()
-			observations, err = Scan(context.Background(), roots)
+			observations, err = Scan(context.Background(), testRoots(t, roots))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -231,7 +231,8 @@ func TestReservedNamespaceCollisionStopsBeforeMutation(t *testing.T) {
 	if err := os.WriteFile(path, []byte("keep"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Scan(context.Background(), []string{root}); err == nil {
+	if rs, err := rootfs.OpenSet(context.Background(), []string{root}); err == nil {
+		rs.Close()
 		t.Fatal("unmarked reserved user directory was adopted")
 	}
 	data, err := os.ReadFile(path)
@@ -246,7 +247,7 @@ func TestQuarantineSupportsMaximumSidecarFilename(t *testing.T) {
 	good := checksumBytes([]byte("good"))
 	writeMirrorFile(t, filepath.Join(roots[0], name), []byte("good"), good)
 	writeMirrorFile(t, filepath.Join(roots[1], name), []byte("bad"), good)
-	observations, err := Scan(context.Background(), roots)
+	observations, err := Scan(context.Background(), testRoots(t, roots))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +256,7 @@ func TestQuarantineSupportsMaximumSidecarFilename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Apply(context.Background(), log, roots, false, io.Discard); err != nil {
+	if err := Apply(context.Background(), log, testRoots(t, roots), false, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -272,7 +273,7 @@ func TestScanCancellationJoinsEveryDiskReader(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	reported := 0
-	_, err := scan(ctx, roots, func(string, string) { reported++; cancel() })
+	_, err := scan(ctx, testRoots(t, roots), func(string, string) { reported++; cancel() })
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("scan cancellation: %v", err)
 	}
@@ -342,7 +343,7 @@ func TestRunRequiresExplicitDependencies(t *testing.T) {
 			t.Fatalf("unconfirmed repair advanced: %+v", repair)
 		}
 	}
-	if err := ValidateCurrentState(context.Background(), log, roots); err != nil {
+	if err := ValidateCurrentState(context.Background(), log, testRoots(t, roots)); err != nil {
 		t.Fatal(err)
 	}
 	// An observational preview needs no confirmation, even with safe repairs.

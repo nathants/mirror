@@ -52,11 +52,11 @@ func TestGuardCleanupStaysOnOriginalFilesystem(t *testing.T) {
 				t.Fatal(err)
 			}
 			root.Close()
-			guard, err := OpenDirectoryGuard(context.Background(), []string{path}, []string{path})
+			guard, err := openTestGuard(t, []string{path}, []string{path})
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer guard.Close()
+
 			if err := guard.SetLocked(context.Background(), false); err != nil {
 				t.Fatal(err)
 			}
@@ -100,11 +100,11 @@ func TestGuardChecksAllRootsBeforeNormalMutation(t *testing.T) {
 	for _, path := range paths {
 		guardTree(t, path)
 	}
-	guard, err := OpenDirectoryGuard(context.Background(), paths, paths)
+	guard, err := openTestGuard(t, paths, paths)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer guard.Close()
+
 	if err := os.Rename(paths[1], paths[1]+"-original"); err != nil {
 		t.Fatal(err)
 	}
@@ -139,11 +139,11 @@ func TestGuardRelocksPartialUnlockWithIndependentContext(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mirror")
 	guardTree(t, path)
 	t.Cleanup(func() { makeGuardTreeWritable(path) })
-	guard, err := OpenDirectoryGuard(context.Background(), []string{path}, []string{path})
+	guard, err := openTestGuard(t, []string{path}, []string{path})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer guard.Close()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	partial := cancelAfterDirectoryUnlock{Context: ctx, cancel: cancel, path: filepath.Join(path, "a")}
@@ -158,7 +158,7 @@ func TestGuardRelocksPartialUnlockWithIndependentContext(t *testing.T) {
 	for _, rel := range []string{".", "a", "b", "b/child"} {
 		assertGuardMode(t, filepath.Join(path, rel), 0544)
 	}
-	if err := guard.Close(); err != nil {
+	if err := guard.roots.Close(); err != nil {
 		t.Fatal(err)
 	}
 	if err := guard.SetLocked(context.Background(), false); !errors.Is(err, os.ErrClosed) {
@@ -169,11 +169,11 @@ func TestGuardRelocksPartialUnlockWithIndependentContext(t *testing.T) {
 func TestGuardWithoutDestinationsChecksIdentityWithoutChmod(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "mirror")
 	guardTree(t, path)
-	guard, err := OpenDirectoryGuard(context.Background(), []string{path}, nil)
+	guard, err := openTestGuard(t, []string{path}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer guard.Close()
+
 	for _, locked := range []bool{true, false} {
 		if err := guard.SetLocked(context.Background(), locked); err != nil {
 			t.Fatal(err)
@@ -201,9 +201,9 @@ func TestGuardRejectsDestinationsOutsideRoots(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	guard, err := OpenDirectoryGuard(context.Background(), []string{path}, []string{path, outside})
+	guard, err := openTestGuard(t, []string{path}, []string{path, outside})
 	if guard != nil {
-		guard.Close()
+		guard.roots.Close()
 		t.Fatal("returned a guard with an unpinned destination")
 	}
 	if err == nil {
@@ -223,9 +223,9 @@ func TestGuardPreflightRejectsUnmarkedInternalState(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(paths[1], rootfs.Internal), 0700); err != nil {
 		t.Fatal(err)
 	}
-	guard, err := OpenDirectoryGuard(context.Background(), paths, paths)
+	guard, err := openTestGuard(t, paths, paths)
 	if guard != nil {
-		guard.Close()
+		guard.roots.Close()
 	}
 	if err == nil {
 		t.Fatal("guard adopted unmarked private namespace")
@@ -233,4 +233,18 @@ func TestGuardPreflightRejectsUnmarkedInternalState(t *testing.T) {
 	for _, path := range paths {
 		assertGuardMode(t, path, 0700)
 	}
+}
+
+func openTestGuard(t *testing.T, paths, destinations []string) (*DirectoryGuard, error) {
+	t.Helper()
+	roots, err := rootfs.OpenSet(context.Background(), paths)
+	if err != nil {
+		return nil, err
+	}
+	t.Cleanup(func() {
+		if err := roots.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return NewDirectoryGuard(context.Background(), roots, destinations)
 }

@@ -35,11 +35,12 @@ func TestEnsurePublishesEachDestinationOnceAndSkipsInternalState(t *testing.T) {
 	file.WriteString("partial")
 	file.Close()
 	root.Close()
-	actions, err := plan(context.Background(), paths)
+	rs := testRoots(t, paths)
+	actions, err := plan(context.Background(), rs)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := apply(context.Background(), actions, true, io.Discard); err != nil {
+	if err := apply(context.Background(), rs, actions, true, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range paths {
@@ -47,7 +48,7 @@ func TestEnsurePublishesEachDestinationOnceAndSkipsInternalState(t *testing.T) {
 			t.Fatal("preview ingested metadata")
 		}
 	}
-	if err := apply(context.Background(), actions, false, io.Discard); err != nil {
+	if err := apply(context.Background(), rs, actions, false, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	for _, path := range paths {
@@ -60,7 +61,7 @@ func TestEnsurePublishesEachDestinationOnceAndSkipsInternalState(t *testing.T) {
 			t.Fatal("link not copied")
 		}
 	}
-	actions, err = plan(context.Background(), paths)
+	actions, err = plan(context.Background(), rs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,10 +76,24 @@ func TestEnsureConflictsFailBeforePublication(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if _, err := plan(context.Background(), paths); err == nil {
+	if _, err := plan(context.Background(), testRoots(t, paths)); err == nil {
 		t.Fatal("disagreeing sources accepted")
 	}
 	if _, err := os.Stat(filepath.Join(paths[2], "item")); !errors.Is(err, os.ErrNotExist) {
 		t.Fatal("conflict published data")
 	}
+}
+
+func testRoots(t *testing.T, paths []string) *rootfs.Set {
+	t.Helper()
+	roots, err := rootfs.OpenSet(context.Background(), paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := roots.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return roots
 }
