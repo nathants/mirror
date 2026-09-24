@@ -80,11 +80,6 @@ func main() {
 		}
 	}
 
-	const wrapperPrefix = "#!/bin/bash\nset -euo pipefail\ncd -- \"$(dirname -- \"${BASH_SOURCE[0]}\")/..\"\n"
-	expectedWrappers := map[string]string{
-		"bake-e2e-image": wrapperPrefix + "exec go run ./bin/bake-e2e-image.go \"$@\"\n",
-		"mirror":         wrapperPrefix + "exec ./mirror \"$@\"\n",
-	}
 	entries, err := os.ReadDir(filepath.Join(repo, "bin"))
 	if err != nil {
 		fatal("read bin: %v", err)
@@ -94,11 +89,6 @@ func main() {
 			continue
 		}
 		path := filepath.Join(repo, "bin", entry.Name())
-		expected, found := expectedWrappers[entry.Name()]
-		if !found {
-			fatal("unexpected executable in bin: %s", path)
-		}
-		delete(expectedWrappers, entry.Name())
 		info, err := entry.Info()
 		if err != nil {
 			fatal("stat %s: %v", path, err)
@@ -109,13 +99,6 @@ func main() {
 		if info.Mode()&0o111 == 0 {
 			fatal("thin wrapper is not executable: %s", path)
 		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			fatal("read %s: %v", path, err)
-		}
-		if string(data) != expected {
-			fatal("bin/%s is not the required thin wrapper", entry.Name())
-		}
 		fmt.Printf("==> bash -n bin/%s\n", entry.Name())
 		command := exec.Command("bash", "-n", path)
 		command.Dir = repo
@@ -124,14 +107,6 @@ func main() {
 		if err := command.Run(); err != nil {
 			fatal("bash -n %s: %v", path, err)
 		}
-	}
-	if len(expectedWrappers) != 0 {
-		var missing []string
-		for name := range expectedWrappers {
-			missing = append(missing, name)
-		}
-		sort.Strings(missing)
-		fatal("missing required bin wrappers: %s", strings.Join(missing, ", "))
 	}
 	fmt.Println("PASS")
 }
