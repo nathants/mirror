@@ -75,11 +75,11 @@ func TestRepairRevalidatesPreviouslyAbsentCopies(t *testing.T) {
 				case "confirmation":
 					options.Confirm = func(context.Context) error { introduceEvidence(); return nil }
 				case "application":
-					options.Save = func(path string, log Log) error {
-						if err := Save(path, log); err != nil {
+					options.Append = func(j *Journal, p Progress) error {
+						if err := j.Append(p); err != nil {
 							return err
 						}
-						if log.Repairs[0].State == RepairStarted {
+						if p.Repair != nil && *p.Repair == 0 && p.State == RepairStarted {
 							introduceEvidence()
 						}
 						return nil

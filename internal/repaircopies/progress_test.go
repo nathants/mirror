@@ -128,12 +128,12 @@ func TestCheckpointFailureStopsBeforeNextMutation(t *testing.T) {
 		t.Run(failState, func(t *testing.T) {
 			home, roots, options := progressFixture(t)
 			failed := false
-			options.Save = func(path string, log Log) error {
-				if len(log.Repairs) > 1 && log.Repairs[1].State == failState {
+			options.Append = func(j *Journal, p Progress) error {
+				if p.Repair != nil && *p.Repair == 1 && p.State == failState {
 					failed = true
 					return errors.New("injected checkpoint failure")
 				}
-				return Save(path, log)
+				return j.Append(p)
 			}
 			if err := Run(context.Background(), home, false, false, options); err == nil || !strings.Contains(err.Error(), "injected checkpoint failure") || !failed {
 				t.Fatalf("checkpoint failure did not stop execution: %v", err)
@@ -270,5 +270,78 @@ func TestFailedPlanReportCannotReachConfirmationOrMutation(t *testing.T) {
 		if data, err := os.ReadFile(filepath.Join(roots[1], repair.RelPath)); err != nil || string(data) != "bad" {
 			t.Fatal("report failure changed data")
 		}
+	}
+}
+
+func TestCheckpointFailureAfterSyncStopsLaterRepairs(t *testing.T) {
+	for _, failState := range []string{RepairStarted, RepairCompleted} {
+		t.Run(failState, func(t *testing.T) {
+			home, roots, options := progressFixture(t)
+			options.Append = func(j *Journal, p Progress) error {
+				if err := j.Append(p); err != nil {
+					return err
+				}
+				if p.Repair != nil && *p.Repair == 1 && p.State == failState {
+					return errors.New("failure after synced checkpoint")
+				}
+				return nil
+			}
+			if err := Run(context.Background(), home, false, false, options); err == nil || !strings.Contains(err.Error(), "failure after synced checkpoint") {
+				t.Fatalf("checkpoint failure lost: %v", err)
+			}
+			log, err := Load(filepath.Join(home, ".mirror", repairLogName))
+			if err != nil || log.Repairs[1].State != failState || log.Repairs[2].State != RepairPending {
+				t.Fatalf("durable progress lost after uncertain result: %+v %v", log, err)
+			}
+			want := "bad"
+			if failState == RepairCompleted {
+				want = "good"
+			}
+			if data, err := os.ReadFile(filepath.Join(roots[1], "b")); err != nil || string(data) != want {
+				t.Fatalf("unexpected mutation around checkpoint failure: %q %v", data, err)
+			}
+			if data, err := os.ReadFile(filepath.Join(roots[1], "c")); err != nil || string(data) != "bad" {
+				t.Fatal("continued after uncertain checkpoint result")
+			}
+		})
+	}
+}
+
+func TestRunResumesTornCompletionWithoutRepeatingPublication(t *testing.T) {
+	home, roots, options := progressFixture(t)
+	path := filepath.Join(home, ".mirror", repairLogName)
+	options.Append = func(j *Journal, p Progress) error {
+		if err := j.Append(p); err != nil {
+			return err
+		}
+		if p.Repair != nil && *p.Repair == 0 && p.State == RepairCompleted {
+			info, err := os.Stat(path)
+			if err != nil {
+				return err
+			}
+			if err := os.Truncate(path, info.Size()-10); err != nil {
+				return err
+			}
+			return errors.New("interrupted completion record")
+		}
+		return nil
+	}
+	if err := Run(context.Background(), home, false, false, options); err == nil {
+		t.Fatal("interrupted completion did not stop work")
+	}
+	log, err := Load(path)
+	if err != nil || log.Repairs[0].State != RepairStarted || log.Repairs[1].State != RepairPending {
+		t.Fatalf("torn completion was trusted: %+v %v", log, err)
+	}
+	options.Append = nil
+	if err := Run(context.Background(), home, false, true, options); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"a", "b", "c"} {
+		quarantined(t, roots[1], name) // Exactly one publication per corrupt file.
+	}
+	log, err = Load(path)
+	if err != nil || log.Status != StatusCompleted {
+		t.Fatalf("resume failed: %+v %v", log, err)
 	}
 }

@@ -23,7 +23,7 @@ func TestRepairRunUsesCLIOutput(t *testing.T) {
 	// a controlling terminal, and verify its first diagnostic uses our stream.
 	var output, diagnostic bytes.Buffer
 	code := Run(context.Background(), []string{"repair-copies", "--resume"}, strings.NewReader(""), &output, &diagnostic)
-	if code != 1 || !strings.Contains(output.String(), "repair log: "+filepath.Join(home, ".mirror", "repair-last.json")) {
+	if code != 1 || !strings.Contains(output.String(), "repair log: "+filepath.Join(home, ".mirror", "repair-last.jsonl")) {
 		t.Fatalf("code=%d output=%q diagnostic=%q", code, &output, &diagnostic)
 	}
 }
@@ -128,7 +128,7 @@ func TestCopyHandlersRunRealWorkflowsThroughCLIStreams(t *testing.T) {
 				if confirmations != 2 || strings.Count(output.String(), "repaired checksumfile:") != 2 || !strings.Contains(output.String(), "repaired=1 unresolved=0") || strings.Contains(output.String(), "scanning ") {
 					t.Fatalf("confirmations=%d output=%q", confirmations, &output)
 				}
-				log, err := repaircopies.Load(filepath.Join(home, ".mirror", "repair-last.json"))
+				log, err := repaircopies.Load(filepath.Join(home, ".mirror", "repair-last.jsonl"))
 				if err != nil || log.Status != repaircopies.StatusCompleted {
 					t.Fatalf("log status=%s error=%v", log.Status, err)
 				}

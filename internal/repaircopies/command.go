@@ -13,18 +13,19 @@ import (
 	"mirror/lib"
 )
 
-const repairLogName = "repair-last.json"
+const repairLogName = "repair-last.jsonl"
 
 // Options supplies the command's inventory, interaction, and journal boundaries.
 // Snapshot must freshly resolve the configured mounted mirrors on every call.
 // Confirm is required only when applying unfinished safe repairs; it must return
-// an error unless the user explicitly approves. Save defaults to the atomic Save.
+// an error unless the user explicitly approves. Append defaults to Journal.Append
+// and must sync each progress record before returning success.
 // The caller must hold the operation lock for the entire Run.
 type Options struct {
 	Snapshot func(context.Context) (mountdisks.Snapshot, error)
 	Confirm  func(context.Context) error
 	Output   io.Writer
-	Save     func(string, Log) error
+	Append   func(*Journal, Progress) error
 }
 
 func Run(ctx context.Context, homeDir string, preview, resume bool, options Options) (returnErr error) {
@@ -37,14 +38,20 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 	if options.Snapshot == nil || options.Output == nil {
 		return errors.New("repair snapshot and output are required")
 	}
-	if options.Save == nil {
-		options.Save = Save
+	if options.Append == nil {
+		options.Append = (*Journal).Append
 	}
 	logPath := filepath.Join(homeDir, ".mirror", repairLogName)
 	if _, err := fmt.Fprintf(options.Output, "repair log: %s\n", logPath); err != nil {
 		return err
 	}
 	var log Log
+	var journal *Journal
+	record := func(progress Progress) error {
+		err := options.Append(journal, progress)
+		log = journal.log
+		return err
+	}
 	haveLog := false
 	// Registered before guard cleanup: record cleanup failures too, and always
 	// distinguish unresolved consensus from operational failure in the journal.
@@ -53,16 +60,22 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 			return
 		}
 		if returnErr != nil {
-			log.Error = returnErr.Error()
-			if log.Status == StatusCompleted {
-				log.Status = StatusPending
-				log.CompletedAt = time.Time{}
+			var err error
+			if journal != nil {
+				err = record(Progress{Error: returnErr.Error()})
+			} else {
+				// Before progress starts, only the scan snapshot needs updating.
+				log.Error = returnErr.Error()
+				err = Save(logPath, log)
 			}
-			if err := options.Save(logPath, log); err != nil {
+			if err != nil {
 				returnErr = errors.Join(returnErr, fmt.Errorf("save stopped repair state (last durable checkpoint may be uncertain): %w", err))
 			}
 		}
 		returnErr = errors.Join(returnErr, PrintSummary(options.Output, log), unresolvedError(log))
+		if journal != nil {
+			returnErr = errors.Join(returnErr, journal.Close())
+		}
 	}()
 	var roots *rootfs.Set
 	defer func() {
@@ -71,16 +84,16 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 		}
 	}()
 	if resume {
-		loaded, err := Load(logPath)
+		opened, err := OpenJournal(logPath)
 		if err != nil {
 			return err
 		}
-		if loaded.Status != StatusUnresolved {
-			if err := RequirePending(loaded); err != nil {
-				return err
+		if opened.log.Status != StatusUnresolved {
+			if err := RequirePending(opened.log); err != nil {
+				return errors.Join(err, opened.Close())
 			}
 		}
-		log, haveLog = loaded, true
+		journal, log, haveLog = opened, opened.log, true
 		if _, err := fmt.Fprintf(options.Output, "loaded %s repair scan completed at %s:\n", log.Status, log.ScannedAt.Format(time.RFC3339)); err != nil {
 			return err
 		}
@@ -94,7 +107,7 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 		if err != nil {
 			return err
 		}
-		if err := options.Save(logPath, scanning); err != nil {
+		if err := Save(logPath, scanning); err != nil {
 			return err
 		}
 		log, haveLog = scanning, true
@@ -133,10 +146,15 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if err := options.Save(logPath, completedScan); err != nil {
+		if err := Save(logPath, completedScan); err != nil {
 			return err
 		}
 		log = completedScan
+		journal, err = OpenJournal(logPath)
+		if err != nil {
+			return err
+		}
+		log = journal.log
 		if log.Status == StatusClean {
 			_, err := fmt.Fprintln(options.Output, "scan completed: no mismatches")
 			return err
@@ -204,18 +222,13 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 			return err
 		}
 		checkpoint := func(i int, state string, failure error) error {
-			next := log
-			next.Repairs = append([]Repair(nil), log.Repairs...)
-			next.Error = ""
-			next.Repairs[i].State = state
-			next.Repairs[i].Error = ""
+			progress := Progress{Repair: &i, State: state}
 			if failure != nil {
-				next.Repairs[i].Error = failure.Error()
+				progress.Error = failure.Error()
 			}
-			if err := options.Save(logPath, next); err != nil {
-				return fmt.Errorf("save %s checkpoint for %s: %w", state, next.Repairs[i].RelPath, err)
+			if err := record(progress); err != nil {
+				return fmt.Errorf("save %s checkpoint for %s: %w", state, log.Repairs[i].RelPath, err)
 			}
-			log = next
 			return nil
 		}
 		if err := apply(ctx, log, roots, false, options.Output, checkpoint); err != nil {
@@ -229,14 +242,10 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 		return err
 	}
 	if log.Status == StatusPending {
-		completed, err := MarkCompleted(log, time.Now().UTC())
-		if err != nil {
+		completedAt := time.Now().UTC()
+		if err := record(Progress{FinishAt: &completedAt}); err != nil {
 			return err
 		}
-		if err := options.Save(logPath, completed); err != nil {
-			return err
-		}
-		log = completed
 	}
 	return nil
 }

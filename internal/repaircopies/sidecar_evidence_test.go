@@ -92,11 +92,22 @@ func TestSidecarOnlyEvidenceSurvivesLogResumeAndCompletion(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(roots[2], "item")); err != nil || string(data) != "bad" {
 		t.Fatal("preview changed data")
 	}
+	j, err := OpenJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer j.Close()
 	for range 2 { // Desired target state remains resumable; evidence stays unchanged.
 		if err := ValidateCurrentState(context.Background(), loaded, testRoots(t, roots)); err != nil {
 			t.Fatal(err)
 		}
-		if err := Apply(context.Background(), loaded, testRoots(t, roots), false, io.Discard); err != nil {
+		if err := apply(context.Background(), j.log, testRoots(t, roots), false, io.Discard, func(i int, state string, failure error) error {
+			p := Progress{Repair: &i, State: state}
+			if failure != nil {
+				p.Error = failure.Error()
+			}
+			return j.Append(p)
+		}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -115,14 +126,11 @@ func TestSidecarOnlyEvidenceSurvivesLogResumeAndCompletion(t *testing.T) {
 	if data, err := os.ReadFile(filepath.Join(roots[2], "item")); err != nil || string(data) != "good" {
 		t.Fatalf("data not repaired using sidecar-only vote: %q %v", data, err)
 	}
-	completed, err := MarkCompleted(loaded, time.Now().UTC())
-	if err != nil {
+	completedAt := time.Now().UTC()
+	if err := j.Append(Progress{FinishAt: &completedAt}); err != nil {
 		t.Fatal(err)
 	}
-	if err := Save(path, completed); err != nil {
-		t.Fatal(err)
-	}
-	completed, err = Load(path)
+	completed, err := Load(path)
 	if err != nil || completed.Status != StatusCompleted {
 		t.Fatalf("completion lost: %s %v", completed.Status, err)
 	}

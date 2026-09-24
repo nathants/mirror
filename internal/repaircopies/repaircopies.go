@@ -16,7 +16,7 @@ import (
 )
 
 const (
-	LogVersion       = 4
+	LogVersion       = 5
 	StatusScanning   = "scanning"
 	StatusPending    = "pending"
 	StatusClean      = "clean"
@@ -185,24 +185,6 @@ func uniqueWinner(copies []Copy, configured int) (string, error) {
 		}
 	}
 	return "", errors.New("no data copy matches the majority checksum")
-}
-func MarkCompleted(log Log, completedAt time.Time) (Log, error) {
-	if err := RequirePending(log); err != nil {
-		return Log{}, err
-	}
-	log.Repairs = append([]Repair(nil), log.Repairs...)
-	for i := range log.Repairs {
-		log.Repairs[i].State = RepairCompleted
-		log.Repairs[i].Error = ""
-	}
-	log.Error = ""
-	log.Status = StatusCompleted
-	log.CompletedAt = completedAt.UTC()
-	if len(log.Unresolved) > 0 {
-		log.Status = StatusUnresolved
-		log.CompletedAt = time.Time{}
-	}
-	return log, validateLog(log)
 }
 func RequirePending(log Log) error {
 	if log.Status != StatusPending {

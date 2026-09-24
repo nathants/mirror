@@ -88,7 +88,7 @@ func TestSaveLoadLogIsAtomicPrivateAndStrict(t *testing.T) {
 		t.Fatal(err)
 	}
 	stateDir := filepath.Join(t.TempDir(), ".mirror")
-	path := filepath.Join(stateDir, "repair-last.json")
+	path := filepath.Join(stateDir, repairLogName)
 	if err := Save(path, log); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -122,7 +122,7 @@ func TestSaveLoadLogIsAtomicPrivateAndStrict(t *testing.T) {
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "trailing") {
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "record") {
 		t.Fatalf("trailing JSON error = %v", err)
 	}
 }
@@ -257,7 +257,7 @@ func TestValidateCurrentStateRejectsRootOrFileDrift(t *testing.T) {
 	}
 }
 
-func TestMarkCompletedPreventsResume(t *testing.T) {
+func TestRequirePendingRejectsScanningAndCompleted(t *testing.T) {
 	now := time.Now().UTC()
 	log := Log{Version: LogVersion, ConfiguredMirrors: 1, Status: StatusScanning, StartedAt: now, Roots: []string{"/mirror/a"}}
 	if err := RequirePending(log); err == nil {

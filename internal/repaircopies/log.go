@@ -1,14 +1,20 @@
 package repaircopies
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+
+	"golang.org/x/sys/unix"
 )
 
+// Save atomically publishes a new scan or a compacted journal snapshot. Per-file
+// checkpoints must use Journal.Append rather than rewriting this evidence.
 func Save(path string, log Log) error {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return fmt.Errorf("repair log path must be a clean absolute path: %q", path)
@@ -78,46 +84,93 @@ func Save(path string, log Log) error {
 	return nil
 }
 
+// Load is observational: it replays complete progress records without changing
+// the journal. Only an unterminated final record may be ignored after a crash.
 func Load(path string) (Log, error) {
+	file, err := openLog(path, os.O_RDONLY)
+	if err != nil {
+		return Log{}, err
+	}
+	log, _, err := readLog(file)
+	return log, errors.Join(err, file.Close())
+}
+
+func openLog(path string, flags int) (*os.File, error) {
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
-		return Log{}, fmt.Errorf("repair log path must be a clean absolute path: %q", path)
+		return nil, fmt.Errorf("repair log path must be a clean absolute path: %q", path)
 	}
-	info, err := os.Lstat(path)
+	fd, err := unix.Openat2(unix.AT_FDCWD, path, &unix.OpenHow{
+		Flags: uint64(flags | unix.O_NONBLOCK | unix.O_CLOEXEC), Resolve: unix.RESOLVE_NO_SYMLINKS,
+	})
 	if err != nil {
-		return Log{}, fmt.Errorf("inspect repair log: %w", err)
+		return nil, fmt.Errorf("open repair log: %w", err)
 	}
-	if !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 {
-		return Log{}, fmt.Errorf("repair log is not a regular file: %s", path)
+	file := os.NewFile(uintptr(fd), path)
+	info, err := file.Stat()
+	if err == nil && !info.Mode().IsRegular() {
+		err = errors.New("repair log is not a regular file")
 	}
-	if info.Mode().Perm()&0o077 != 0 {
-		return Log{}, fmt.Errorf("repair log permissions must not allow group or other access: %o", info.Mode().Perm())
+	if err == nil && info.Mode().Perm()&0077 != 0 {
+		err = errors.New("repair log permissions must not allow group or other access")
 	}
-	file, err := os.Open(path)
 	if err != nil {
-		return Log{}, fmt.Errorf("open repair log: %w", err)
+		return nil, errors.Join(err, file.Close())
 	}
-	defer file.Close()
-	decoder := json.NewDecoder(file)
-	decoder.DisallowUnknownFields()
+	return file, nil
+}
+
+func readLog(file *os.File) (Log, bool, error) {
+	reader := bufio.NewReader(file)
+	snapshot, err := reader.ReadBytes('\n')
+	if err != nil {
+		return Log{}, false, fmt.Errorf("incomplete repair snapshot; run a fresh scan: %w", err)
+	}
 	var log Log
-	if err := decoder.Decode(&log); err != nil {
-		return Log{}, fmt.Errorf("decode repair log: %w", err)
+	if err := decodeRecord(snapshot, &log); err != nil {
+		return Log{}, false, fmt.Errorf("decode repair snapshot; old versions require a fresh scan: %w", err)
+	}
+	if err := validateLog(log); err != nil {
+		return Log{}, false, fmt.Errorf("validate repair log: %w", err)
+	}
+	sequence := 0
+	for {
+		data, err := reader.ReadBytes('\n')
+		if errors.Is(err, io.EOF) {
+			return log, sequence > 0 || len(data) > 0, nil
+		}
+		if err != nil {
+			return Log{}, false, err
+		}
+		var record journalRecord
+		if err := decodeRecord(data, &record); err != nil {
+			return Log{}, false, fmt.Errorf("decode repair progress record: %w", err)
+		}
+		if record.Sequence != sequence+1 {
+			return Log{}, false, errors.New("repair progress record sequence is not contiguous")
+		}
+		if err := validateProgress(log, record.Progress); err != nil {
+			return Log{}, false, err
+		}
+		applyProgress(&log, record.Progress)
+		sequence++
+	}
+}
+
+func decodeRecord(data []byte, value any) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(value); err != nil {
+		return err
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return Log{}, errors.New("repair log contains trailing JSON data")
-		}
-		return Log{}, fmt.Errorf("decode trailing repair log data: %w", err)
+		return errors.New("repair journal record contains trailing data")
 	}
-	if err := validateLog(log); err != nil {
-		return Log{}, fmt.Errorf("validate repair log: %w", err)
-	}
-	return log, nil
+	return nil
 }
 
 func marshalLog(log Log) ([]byte, error) {
-	data, err := json.MarshalIndent(log, "", "  ")
+	data, err := json.Marshal(log)
 	if err != nil {
 		return nil, fmt.Errorf("encode repair log: %w", err)
 	}
