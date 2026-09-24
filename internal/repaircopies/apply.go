@@ -16,9 +16,18 @@ import (
 // before mutation, never applies unresolved findings, and reports their presence
 // even when the safe subset succeeds. The CLI uses apply with durable checkpoints.
 func Apply(ctx context.Context, log Log, rs *rootfs.Set, preview bool, writer io.Writer) error {
+	if writer == nil {
+		return errors.New("repair output is required")
+	}
+	if err := ValidateCurrentState(ctx, log, rs); err != nil {
+		return errors.Join(err, unresolvedError(log))
+	}
 	return errors.Join(apply(ctx, log, rs, preview, writer, nil), unresolvedError(log))
 }
 
+// The caller validates the full plan after confirmation and before unlocking.
+// Per-file evidence is rechecked here immediately before publication; no second
+// whole-plan data pass is needed between unlock and the first repair.
 // A checkpoint must durably record starts before any publication for that file.
 // A failed checkpoint or operational error stops all subsequent repairs.
 func apply(ctx context.Context, log Log, rs *rootfs.Set, preview bool, writer io.Writer, checkpoint func(int, string, error) error) error {
@@ -26,9 +35,6 @@ func apply(ctx context.Context, log Log, rs *rootfs.Set, preview bool, writer io
 		return errors.New("repair output is required")
 	}
 	if err := prepare(ctx, log, rs); err != nil {
-		return err
-	}
-	if err := validateFiles(ctx, log, rs, false); err != nil {
 		return err
 	}
 	record := func(i int, state string, failure error) error {
@@ -49,7 +55,7 @@ func apply(ctx context.Context, log Log, rs *rootfs.Set, preview bool, writer io
 		}
 		err := applyRepair(ctx, repair, rs, preview, writer)
 		if err == nil && !preview {
-			err = validateRepair(ctx, repair, rs, true)
+			_, err = validateRepair(ctx, repair, rs, true)
 		}
 		if err != nil {
 			return errors.Join(fmt.Errorf("repair %s: %w", repair.RelPath, err), record(i, RepairFailed, err))
@@ -68,46 +74,21 @@ func apply(ctx context.Context, log Log, rs *rootfs.Set, preview bool, writer io
 
 func applyRepair(ctx context.Context, repair Repair, rs *rootfs.Set, preview bool, writer io.Writer) error {
 	// Recheck the complete file's evidence immediately before its first mutation.
-	if err := validateRepair(ctx, repair, rs, false); err != nil {
+	verified, err := validateRepair(ctx, repair, rs, false)
+	if err != nil {
 		return err
 	}
-	var source *rootfs.Root
-	for _, copy := range repair.Copies {
-		if copy.ActualChecksum == "" {
-			continue
-		}
-		actual, err := checksumFile(ctx, rs.Get(copy.Root), repair.RelPath)
-		if err != nil {
-			return err
-		}
-		if actual == repair.Checksum {
-			source = rs.Get(copy.Root)
-			break
-		}
-	}
-	if source == nil {
-		return fmt.Errorf("no verified source remains for %s", repair.RelPath)
-	}
-	for _, copy := range repair.Copies {
-		if copy.ActualChecksum == "" {
-			continue // Preserve evidence-only sidecars; never fill missing data.
-		}
+	for _, copy := range verified.copies {
 		root := rs.Get(copy.Root)
-		actual, err := checksumFile(ctx, root, repair.RelPath)
-		if err != nil {
-			return err
-		}
+		actual := copy.ActualChecksum
 		if actual != repair.Checksum {
-			if actual != copy.ActualChecksum {
-				return fmt.Errorf("destination changed immediately before repair: %s", repair.RelPath)
-			}
 			if preview {
 				if _, err := fmt.Fprintln(writer, "preview: repaired file:", filepath.Join(copy.Root, repair.RelPath)); err != nil {
 					return err
 				}
 			} else {
 				backup, err := replace(ctx, root, repair.RelPath, actual, repair.Checksum, func(f *os.File) error {
-					src, err := openRegular(source, repair.RelPath)
+					src, err := openRegular(verified.source, repair.RelPath)
 					if err != nil {
 						return err
 					}
@@ -126,14 +107,8 @@ func applyRepair(ctx context.Context, repair Repair, rs *rootfs.Set, preview boo
 			}
 		}
 		sidecarPath := repair.RelPath + checksumSuffix
-		sidecar, err := readSidecar(ctx, root, sidecarPath)
-		if err != nil {
-			return err
-		}
+		sidecar := copy.Sidecar
 		if sidecar == nil || sidecar.Value != repair.Checksum {
-			if !equalSidecars(sidecar, copy.Sidecar) {
-				return fmt.Errorf("sidecar changed immediately before repair: %s", sidecarPath)
-			}
 			if preview {
 				if _, err := fmt.Fprintln(writer, "preview: repaired checksumfile:", filepath.Join(copy.Root, sidecarPath)); err != nil {
 					return err

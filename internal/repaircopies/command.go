@@ -177,7 +177,7 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 	for _, repair := range log.Repairs {
 		pending = pending || repair.State != RepairCompleted
 	}
-	if !pending {
+	if !pending || preview {
 		if err := ValidateCurrentState(ctx, log, roots); err != nil {
 			return err
 		}

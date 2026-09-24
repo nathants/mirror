@@ -245,14 +245,23 @@ func prepare(ctx context.Context, log Log, rs *rootfs.Set) error {
 }
 func validateFiles(ctx context.Context, log Log, rs *rootfs.Set, complete bool) error {
 	for _, repair := range log.Repairs {
-		if err := validateRepair(ctx, repair, rs, complete || repair.State == RepairCompleted); err != nil {
+		if _, err := validateRepair(ctx, repair, rs, complete || repair.State == RepairCompleted); err != nil {
 			return err
 		}
 	}
 	return ctx.Err()
 }
 
-func validateRepair(ctx context.Context, repair Repair, rs *rootfs.Set, complete bool) error {
+// verifiedRepair is short-lived evidence for one immediate application. Source
+// bytes are still checked after staging, destinations before replacement, and
+// every copy again before recording completion.
+type verifiedRepair struct {
+	source *rootfs.Root
+	copies []Copy
+}
+
+func validateRepair(ctx context.Context, repair Repair, rs *rootfs.Set, complete bool) (verifiedRepair, error) {
+	verified := verifiedRepair{}
 	observed := make(map[string]bool, len(repair.Copies))
 	for _, copy := range repair.Copies {
 		observed[copy.Root] = true
@@ -266,47 +275,47 @@ func validateRepair(ctx context.Context, repair Repair, rs *rootfs.Set, complete
 			continue
 		}
 		if err := ctx.Err(); err != nil {
-			return err
+			return verified, err
 		}
 		if err := root.Check(); err != nil {
-			return err
+			return verified, err
 		}
 		if err := CheckMissingDestination(ctx, root, repair.RelPath); err != nil {
-			return fmt.Errorf("unobserved repair paths must remain absent; inspect the evidence and run a fresh scan: %w", err)
+			return verified, fmt.Errorf("unobserved repair paths must remain absent; inspect the evidence and run a fresh scan: %w", err)
 		}
 	}
-	hasSource := false
 	for _, copy := range repair.Copies {
 		root := rs.Get(copy.Root)
 		if copy.ActualChecksum == "" {
 			if err := validateEvidenceOnly(ctx, root, repair.RelPath, copy.Sidecar); err != nil {
-				return err
+				return verified, err
 			}
 			continue
 		}
 		actual, err := checksumFile(ctx, root, repair.RelPath)
 		if err != nil {
-			return err
+			return verified, err
 		}
 		if actual != repair.Checksum && (complete || actual != copy.ActualChecksum) {
-			return fmt.Errorf("file changed since the logged scan or is not repaired: %s", filepath.Join(copy.Root, repair.RelPath))
+			return verified, fmt.Errorf("file changed since the logged scan or is not repaired: %s", filepath.Join(copy.Root, repair.RelPath))
 		}
 		sidecar, err := readSidecar(ctx, root, repair.RelPath+checksumSuffix)
 		if err != nil {
-			return err
+			return verified, err
 		}
 		desired := sidecar != nil && sidecar.Value == repair.Checksum
 		if !desired && (complete || !equalSidecars(sidecar, copy.Sidecar)) {
-			return fmt.Errorf("checksum sidecar changed since the logged scan or is not repaired: %s", filepath.Join(copy.Root, repair.RelPath+checksumSuffix))
+			return verified, fmt.Errorf("checksum sidecar changed since the logged scan or is not repaired: %s", filepath.Join(copy.Root, repair.RelPath+checksumSuffix))
 		}
-		if actual == repair.Checksum {
-			hasSource = true
+		verified.copies = append(verified.copies, Copy{Root: copy.Root, ActualChecksum: actual, Sidecar: sidecar})
+		if actual == repair.Checksum && verified.source == nil {
+			verified.source = root
 		}
 	}
-	if !hasSource {
-		return fmt.Errorf("no verified source remains for %s", repair.RelPath)
+	if verified.source == nil {
+		return verified, fmt.Errorf("no verified source remains for %s", repair.RelPath)
 	}
-	return ctx.Err()
+	return verified, ctx.Err()
 }
 
 // Evidence-only entries are not repair targets. In both resume and completion,
