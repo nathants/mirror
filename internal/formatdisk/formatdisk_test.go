@@ -87,9 +87,6 @@ func (f *fakeSystem) Output(_ context.Context, name string, args ...string) ([]b
 		}
 		devices := []inventory.BlockDevice{root}
 		partitionPath := f.devicePath + "1"
-		if f.deviceType == "loop" {
-			partitionPath = f.devicePath + "p1"
-		}
 		partition := inventory.BlockDevice{
 			Path:       partitionPath,
 			KernelName: partitionPath,
@@ -590,35 +587,6 @@ func TestFailedMountVerificationLeavesStateForManualRecovery(t *testing.T) {
 	if count := countCalls(system.calls, "cryptsetup", "close"); count != 0 {
 		t.Fatalf("failure called cryptsetup close %d times, want 0", count)
 	}
-}
-
-func TestNonSCSIBypassExistsOnlyInInjectedTestOptions(t *testing.T) {
-	system := newFakeSystem()
-	system.devicePath = "/dev/loop7"
-	system.deviceType = "loop"
-	system.serial = ""
-	system.wwn = ""
-	system.mapperPath = "/test/mapper/loop7"
-	system.mountPath = "/test/home/mnt.loop7"
-
-	configure := func(option *Options) {
-		option.HomeDir = "/test/home"
-		option.MapperDir = "/test/mapper"
-		option.AllowNonSCSIBlockForTesting = true
-	}
-	_, _, err := runFake("/dev/loop7\n/dev/loop7\n", system, configure)
-	if err != nil {
-		t.Fatalf("test-only loop device failed: %v", err)
-	}
-	for _, call := range system.calls {
-		if call.name == "cryptsetup" && contains(call.args, "luksFormat") {
-			if got := call.args[len(call.args)-1]; got != "/dev/loop7p1" {
-				t.Fatalf("loop partition path = %q, want /dev/loop7p1", got)
-			}
-			return
-		}
-	}
-	t.Fatal("luksFormat was not called")
 }
 
 func TestFormatterNeverInvokesSudo(t *testing.T) {

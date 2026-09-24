@@ -17,19 +17,15 @@ import (
 	"mirror/internal/terminal"
 )
 
-var (
-	productionDevicePattern = regexp.MustCompile(`^/dev/sd[a-z]+$`)
-	testLoopDevicePattern   = regexp.MustCompile(`^/dev/loop[0-9]+$`)
-)
+var productionDevicePattern = regexp.MustCompile(`^/dev/sd[a-z]+$`)
 
 type Options struct {
-	HomeDir                     string
-	MapperDir                   string
-	OwnerUID                    int
-	OwnerGID                    int
-	AllowNonSCSIBlockForTesting bool
-	PartitionPollAttempts       int
-	PartitionPollInterval       time.Duration
+	HomeDir               string
+	MapperDir             string
+	OwnerUID              int
+	OwnerGID              int
+	PartitionPollAttempts int
+	PartitionPollInterval time.Duration
 }
 
 type app struct {
@@ -278,7 +274,7 @@ func (a *app) listDisks(ctx context.Context) ([]inventory.BlockDevice, error) {
 	}
 	eligible := devices[:0]
 	for _, device := range devices {
-		if a.devicePathAllowed(device.Path) && a.rootTypeAllowed(device.Type) {
+		if productionDevicePattern.MatchString(device.Path) && device.Type == "disk" {
 			eligible = append(eligible, device)
 		}
 	}
@@ -286,7 +282,7 @@ func (a *app) listDisks(ctx context.Context) ([]inventory.BlockDevice, error) {
 }
 
 func (a *app) inspectSafeDevice(ctx context.Context, path string) ([]inventory.BlockDevice, error) {
-	if !a.devicePathAllowed(path) {
+	if !productionDevicePattern.MatchString(path) {
 		return nil, fmt.Errorf("only a whole /dev/sdX disk is supported, got: %s", path)
 	}
 	devices, err := a.lsblk(ctx, false, path)
@@ -305,13 +301,13 @@ func (a *app) inspectSafeDevice(ctx context.Context, path string) ([]inventory.B
 	if root == nil {
 		return nil, fmt.Errorf("selected device was not returned by lsblk: %s", path)
 	}
-	if !a.rootTypeAllowed(root.Type) {
+	if root.Type != "disk" {
 		return nil, fmt.Errorf("not a whole disk: %s has type %q", path, root.Type)
 	}
 	if root.ReadOnly {
 		return nil, fmt.Errorf("device is read-only: %s", path)
 	}
-	if !a.option.AllowNonSCSIBlockForTesting && root.Serial == "" && root.WWN == "" {
+	if root.Serial == "" && root.WWN == "" {
 		return nil, fmt.Errorf("device has neither a serial nor a WWN: %s", path)
 	}
 	for _, device := range devices {
@@ -390,9 +386,6 @@ func findDevice(devices []inventory.BlockDevice, path string) (inventory.BlockDe
 
 func (a *app) waitForSinglePartition(ctx context.Context, device string, expectedIdentity diskIdentity) (string, error) {
 	expected := device + "1"
-	if a.option.AllowNonSCSIBlockForTesting && testLoopDevicePattern.MatchString(device) {
-		expected = device + "p1"
-	}
 	for attempt := 0; attempt < a.option.PartitionPollAttempts; attempt++ {
 		devices, err := a.lsblk(ctx, false, device)
 		if err == nil {
@@ -497,20 +490,6 @@ func (a *app) assertPathPresent(path string, message string) error {
 		return fmt.Errorf("%s: %s: %w", message, path, err)
 	}
 	return nil
-}
-
-func (a *app) devicePathAllowed(path string) bool {
-	if a.option.AllowNonSCSIBlockForTesting {
-		return filepath.IsAbs(path) && filepath.Clean(path) == path
-	}
-	return productionDevicePattern.MatchString(path)
-}
-
-func (a *app) rootTypeAllowed(deviceType string) bool {
-	if a.option.AllowNonSCSIBlockForTesting {
-		return deviceType == "disk" || deviceType == "loop"
-	}
-	return deviceType == "disk"
 }
 
 func writeDiskTable(writer io.Writer, devices []inventory.BlockDevice) error {
