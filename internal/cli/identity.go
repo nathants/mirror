@@ -66,6 +66,27 @@ func requireSudoCaller(command string, platform platform) (callerIdentity, error
 	return callerIdentity{HomeDir: account.HomeDir, UID: uid, GID: gid}, nil
 }
 
+// Logging also covers help and parser failures, which do not require sudo. An
+// elevated process with any sudo metadata must validate it rather than falling
+// back to a potentially unrelated HOME or trusting a bare SUDO_UID.
+func loggingCaller(platform platform) (callerIdentity, error) {
+	if platform.effectiveUID == nil || platform.effectiveGID == nil || platform.homeDir == nil || platform.lookupEnv == nil {
+		return callerIdentity{}, errors.New("operating-system identity functions are unavailable")
+	}
+	if platform.effectiveUID() == 0 {
+		for _, name := range []string{"SUDO_UID", "SUDO_GID", "SUDO_USER"} {
+			if _, found := platform.lookupEnv(name); found {
+				return requireSudoCaller("logging", platform)
+			}
+		}
+	}
+	home, err := platform.homeDir()
+	if err != nil {
+		return callerIdentity{}, err
+	}
+	return callerIdentity{HomeDir: home, UID: platform.effectiveUID(), GID: platform.effectiveGID()}, nil
+}
+
 func requiredEnvironment(platform platform, name string) (string, error) {
 	value, found := platform.lookupEnv(name)
 	if !found || value == "" {

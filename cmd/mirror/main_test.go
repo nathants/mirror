@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,7 +60,13 @@ func testCommand(t *testing.T, command string) (*exec.Cmd, string, *bytes.Buffer
 		}
 	}
 	child := exec.Command(self)
-	child.Env = append(os.Environ(), "HOME="+home, "PATH="+filepath.Join(home, "bin"), "MIRROR_TEST_HOME="+home, "MIRROR_TEST_COMMAND="+command)
+	for _, value := range os.Environ() {
+		name, _, _ := strings.Cut(value, "=")
+		if name != "SUDO_UID" && name != "SUDO_GID" && name != "SUDO_USER" {
+			child.Env = append(child.Env, value)
+		}
+	}
+	child.Env = append(child.Env, "HOME="+home, "PATH="+filepath.Join(home, "bin"), "MIRROR_TEST_HOME="+home, "MIRROR_TEST_COMMAND="+command)
 	output := &bytes.Buffer{}
 	child.Stdout = output
 	child.Stderr = output
@@ -103,6 +110,7 @@ func TestSignalsCancelRealCopyRepairAndLockEntrypoints(t *testing.T) {
 				if _, err := os.Stat(filepath.Join(home, "mnt.sde/item.b2sum")); !os.IsNotExist(err) {
 					t.Fatal("wrote metadata after cancellation")
 				}
+				checkFailureLog(t, home, command, "context canceled")
 				// The same lock inode can be acquired immediately after process cleanup.
 				lock, err := operationlock.Acquire(context.Background(), home, os.Getuid(), os.Getgid())
 				if err != nil {
@@ -128,6 +136,7 @@ func TestAllUnprivilegedCommandsUseSharedOperationLock(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(home, "ready")); !os.IsNotExist(err) {
 				t.Fatal("contended command reached inventory")
 			}
+			checkFailureLog(t, home, command, "another mirror operation")
 		})
 	}
 }
@@ -146,4 +155,44 @@ func fakeInventory(name string) {
 	// test so the helper cannot survive indefinitely even if cleanup regresses.
 	time.Sleep(10 * time.Second)
 	os.Exit(2)
+}
+
+func checkFailureLog(t *testing.T, home, command, message string) {
+	t.Helper()
+	paths, err := filepath.Glob(filepath.Join(home, ".mirror-logs", "*.jsonl"))
+	if err != nil || len(paths) != 1 {
+		t.Fatalf("command logs: %v, %v", paths, err)
+	}
+	data, err := os.ReadFile(paths[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	type record struct {
+		Kind     string
+		Args     []string
+		Text     string
+		ExitCode *int `json:"exit_code"`
+	}
+	var records []record
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	for {
+		var value record
+		if err := decoder.Decode(&value); err == io.EOF {
+			break
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		records = append(records, value)
+	}
+	if len(records) < 3 || records[0].Kind != "start" || len(records[0].Args) == 0 || records[0].Args[0] != command {
+		t.Fatalf("missing start/output: %+v", records)
+	}
+	found := false
+	for _, record := range records {
+		found = found || strings.Contains(record.Text, message)
+	}
+	last := records[len(records)-1]
+	if !found || last.Kind != "finish" || last.ExitCode == nil || *last.ExitCode != 1 {
+		t.Fatalf("missing failure diagnostics/status: %+v", records)
+	}
 }

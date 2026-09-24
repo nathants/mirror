@@ -11,6 +11,7 @@ import (
 
 	arg "github.com/alexflint/go-arg"
 
+	"mirror/internal/commandlog"
 	"mirror/internal/terminal"
 	"mirror/lib"
 )
@@ -48,6 +49,8 @@ type callerIdentity struct {
 
 type platform struct {
 	effectiveUID func() int
+	effectiveGID func() int
+	homeDir      func() (string, error)
 	lookupEnv    func(string) (string, bool)
 	lookupUserID func(string) (*user.User, error)
 }
@@ -67,19 +70,44 @@ var errDeclined = errors.New("operation declined")
 // Run executes mirror with production operating-system integrations and returns
 // the process exit code.
 func Run(ctx context.Context, arguments []string, stdin io.Reader, stdout, stderr io.Writer) int {
-	return execute(
-		ctx,
-		arguments,
-		stdin,
-		stdout,
-		stderr,
-		platform{
-			effectiveUID: os.Geteuid,
-			lookupEnv:    os.LookupEnv,
-			lookupUserID: user.LookupId,
-		},
-		commandHandlers(stdin, stdout, stderr, copyDependencies{snapshot: lib.MountedMirrorState, confirm: terminal.Confirm}),
-	)
+	return runWithLogging(ctx, arguments, stdin, stdout, stderr, platform{
+		effectiveUID: os.Geteuid,
+		effectiveGID: os.Getegid,
+		homeDir:      os.UserHomeDir,
+		lookupEnv:    os.LookupEnv,
+		lookupUserID: user.LookupId,
+	}, func(stdout, stderr io.Writer) handlers {
+		return commandHandlers(stdin, stdout, stderr, copyDependencies{snapshot: lib.MountedMirrorState, confirm: terminal.Confirm})
+	})
+}
+
+func runWithLogging(
+	ctx context.Context,
+	arguments []string,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+	platform platform,
+	makeHandlers func(io.Writer, io.Writer) handlers,
+) int {
+	if stdin == nil || stdout == nil || stderr == nil {
+		return 1
+	}
+	caller, err := loggingCaller(platform)
+	var log *commandlog.Log
+	if err == nil {
+		log, err = commandlog.Open(caller.HomeDir, caller.UID, caller.GID, arguments, stderr)
+	}
+	if err != nil {
+		commandlog.Warn(stderr, fmt.Errorf("command logging unavailable: %w", err))
+	} else {
+		stdout = log.Writer("stdout", stdout)
+		stderr = log.Writer("stderr", stderr)
+	}
+	code := execute(ctx, arguments, stdin, stdout, stderr, platform, makeHandlers(stdout, stderr))
+	if log != nil {
+		log.Close(code)
+	}
+	return code
 }
 
 func execute(

@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"time"
+
+	"mirror/internal/commandlog"
 )
 
 // Exec invokes operating-system commands directly with exact argument vectors.
@@ -38,8 +40,10 @@ func (Exec) Run(
 	cmd := exec.Command(name, args...)
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
 	cmd.Stdin = stdin
-	cmd.Stdout = stdout
-	cmd.Stderr = stderr
+	// External action streams may contain echoed input or passwords. Keep them
+	// off disk and retain the original terminal descriptors for interactive tools.
+	cmd.Stdout = commandlog.Unwrap(stdout)
+	cmd.Stderr = commandlog.Unwrap(stderr)
 	if err := RunCommand(ctx, cmd); err != nil {
 		return commandError(name, args, "", err)
 	}
