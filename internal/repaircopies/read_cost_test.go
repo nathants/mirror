@@ -26,6 +26,7 @@ func TestMetadataRepairDoesNotRehashToRediscoverSources(t *testing.T) {
 				}
 				t.Cleanup(func() { _ = os.Chmod(root, 0700) })
 			}
+			lockTestRoots(t, roots)
 			options := Options{
 				Snapshot: func(context.Context) (mountdisks.Snapshot, error) {
 					return mountdisks.Snapshot{Roots: roots, ConfiguredMirrors: 2}, nil
@@ -78,10 +79,10 @@ func TestMetadataRepairDoesNotRehashToRediscoverSources(t *testing.T) {
 					offset += unix.SizeofInotifyEvent + length
 				}
 			}
-			// Confirmation/resume validation, per-file preapplication, immediate
-			// metadata-publication validation, durable completion, and final
-			// verification; fresh runs also scan once.
-			limit := 6
+			// Confirmation/resume validation, one immediate file validation per
+			// destination's write window, metadata-publication validation, durable
+			// completion, and final verification; fresh runs also scan once.
+			limit := 5 + len(roots)
 			if resume {
 				limit--
 			}

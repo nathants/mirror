@@ -195,6 +195,7 @@ func TestValidateAndApplyPendingRepairPreservesCorruptEvidence(t *testing.T) {
 	if err := ValidateCurrentState(context.Background(), log, testRoots(t, []string{rootA, rootB, rootC})); err != nil {
 		t.Fatalf("ValidateCurrentState before apply: %v", err)
 	}
+	lockTestRoots(t, []string{rootA, rootB, rootC})
 	var output strings.Builder
 	if err := Apply(context.Background(), log, testRoots(t, []string{rootA, rootB, rootC}), false, &output); err != nil {
 		t.Fatalf("Apply: %v", err)
@@ -357,6 +358,7 @@ func TestApplyRepairsCorruptSidecarAndPreservesIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	lockTestRoots(t, []string{rootA, rootB})
 	if err := Apply(context.Background(), log, testRoots(t, []string{rootA, rootB}), false, io.Discard); err != nil {
 		t.Fatal(err)
 	}

@@ -48,6 +48,12 @@ func TestRunStopsPublicationOnRootReplacement(t *testing.T) {
 				if kind == "data" {
 					ingestSource(t, roots[0])
 				}
+				lockTestRoots(t, roots)
+				if kind == "link" {
+					if err := os.Chmod(roots[0], 0500); err != nil {
+						t.Fatal(err)
+					}
+				}
 				publications := 0
 				err := Run(context.Background(), false, Options{
 					Snapshot: func(context.Context) (mountdisks.Snapshot, error) {
@@ -90,7 +96,7 @@ func TestRunStopsPublicationOnRootReplacement(t *testing.T) {
 				requireMode(t, roots[replacedIndex], 0700)
 				wantOriginalMode := os.FileMode(0544)
 				if kind == "link" && replacedIndex == 0 {
-					wantOriginalMode = 0700 // source-only directories are never chmodded
+					wantOriginalMode = 0500 // source-only directories are never chmodded
 				}
 				requireMode(t, original, wantOriginalMode)
 				requireAbsent(t, filepath.Join(roots[replacedIndex], "b.b2sum"))
@@ -109,6 +115,7 @@ func TestRunStopsPublicationOnRootReplacement(t *testing.T) {
 func TestRunRetainsRootsFromPlanning(t *testing.T) {
 	roots := workflowRoots(t)
 	ingestSource(t, roots[0])
+	lockTestRoots(t, roots)
 	original := roots[1] + "-original"
 	defer func() {
 		_ = os.RemoveAll(roots[1])

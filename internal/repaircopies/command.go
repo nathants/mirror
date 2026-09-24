@@ -107,14 +107,19 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 		if err != nil {
 			return err
 		}
-		if err := Save(logPath, scanning); err != nil {
-			return err
-		}
-		log, haveLog = scanning, true
 		roots, err = rootfs.OpenSet(ctx, state.Roots)
 		if err != nil {
 			return err
 		}
+		if !preview {
+			if err := lib.CheckWriteInputs(ctx, roots); err != nil {
+				return err
+			}
+		}
+		if err := Save(logPath, scanning); err != nil {
+			return err
+		}
+		log, haveLog = scanning, true
 		if _, err := fmt.Fprintf(options.Output, "scanning %d mounted mirrors (%d configured)...\n", len(state.Roots), state.ConfiguredMirrors); err != nil {
 			return err
 		}
@@ -172,18 +177,23 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 		if err != nil {
 			return err
 		}
+		if !preview {
+			if err := lib.CheckWriteInputs(ctx, roots); err != nil {
+				return err
+			}
+		}
 	}
 	pending := false
 	for _, repair := range log.Repairs {
 		pending = pending || repair.State != RepairCompleted
 	}
-	if !pending || preview {
+	if !pending && !preview {
 		if err := ValidateCurrentState(ctx, log, roots); err != nil {
 			return err
 		}
 	}
 	if preview {
-		if err := apply(ctx, log, roots, true, options.Output, nil); err != nil {
+		if err := apply(ctx, log, roots, true, options.Output, nil, nil); err != nil {
 			return err
 		}
 		_, err := fmt.Fprintln(options.Output, "preview completed; no repairs applied")
@@ -199,28 +209,6 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 		if err := checkSnapshot(ctx, log, options.Snapshot); err != nil {
 			return err
 		}
-		// Validate through the same roots retained for scanning and cleanup.
-		if err := ValidateCurrentState(ctx, log, roots); err != nil {
-			return err
-		}
-		guard, err := lib.NewDirectoryGuard(ctx, roots, log.Roots)
-		if err != nil {
-			return err
-		}
-		if err := checkSnapshot(ctx, log, options.Snapshot); err != nil {
-			return err
-		}
-		defer func() {
-			cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			returnErr = errors.Join(returnErr, guard.Relock(cleanup))
-		}()
-		if err := guard.SetLocked(ctx, false); err != nil {
-			return err
-		}
-		if err := checkSnapshot(ctx, log, options.Snapshot); err != nil {
-			return err
-		}
 		checkpoint := func(i int, state string, failure error) error {
 			progress := Progress{Repair: &i, State: state}
 			if failure != nil {
@@ -231,7 +219,8 @@ func Run(ctx context.Context, homeDir string, preview, resume bool, options Opti
 			}
 			return nil
 		}
-		if err := apply(ctx, log, roots, false, options.Output, checkpoint); err != nil {
+		revalidate := func(ctx context.Context) error { return checkSnapshot(ctx, log, options.Snapshot) }
+		if err := apply(ctx, log, roots, false, options.Output, checkpoint, revalidate); err != nil {
 			return err
 		}
 	}

@@ -28,6 +28,7 @@ func progressFixture(t *testing.T) (string, []string, Options) {
 			_ = os.Chmod(root, 0700)
 		}
 	})
+	lockTestRoots(t, roots)
 	return home, roots, Options{Snapshot: func(context.Context) (mountdisks.Snapshot, error) {
 		return mountdisks.Snapshot{Roots: roots, ConfiguredMirrors: 2}, nil
 	}, Confirm: func(context.Context) error { return nil }, Output: io.Discard}
@@ -168,6 +169,7 @@ func TestOnlyUnresolvedFindingsRemainReportableOnResume(t *testing.T) {
 			}
 		}
 	}
+	lockTestRoots(t, roots)
 	options.Confirm = func(context.Context) error { t.Fatal("unresolved-only run requested confirmation"); return nil }
 	var output strings.Builder
 	options.Output = &output
@@ -185,7 +187,7 @@ func TestOnlyUnresolvedFindingsRemainReportableOnResume(t *testing.T) {
 		}
 		for _, root := range roots {
 			info, err := os.Stat(root)
-			if err != nil || info.Mode().Perm() != 0700 {
+			if err != nil || info.Mode().Perm() != 0544 {
 				t.Fatal("unresolved-only run changed directory modes")
 			}
 		}

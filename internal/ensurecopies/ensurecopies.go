@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"sort"
-	"time"
 
 	"mirror/internal/mountdisks"
 	"mirror/internal/repaircopies"
@@ -48,6 +47,11 @@ func Run(ctx context.Context, preview bool, options Options) (returnErr error) {
 		return err
 	}
 	defer func() { returnErr = errors.Join(returnErr, roots.Close()) }()
+	if !preview {
+		if err := lib.CheckWriteInputs(ctx, roots); err != nil {
+			return err
+		}
+	}
 	actions, err := plan(ctx, roots)
 	if err != nil {
 		return err
@@ -58,38 +62,41 @@ func Run(ctx context.Context, preview bool, options Options) (returnErr error) {
 	if len(actions) == 0 {
 		return ctx.Err()
 	}
-	// Only planned write destinations need directory mutations. A data source
-	// is also a destination when it needs a checksum sidecar.
-	writes := make(map[string]bool)
+	// Batch by destination so each disk gets one write window, including its
+	// sidecars. Sources in this plan already exist; batches do not depend on
+	// earlier publication. Relock one destination before unlocking the next.
+	writes := make(map[string][]action)
 	for _, a := range actions {
-		writes[a.destination] = true
+		writes[a.destination] = append(writes[a.destination], a)
 	}
-	var destinations []string
-	for _, root := range state.Roots {
-		if writes[root] {
-			destinations = append(destinations, root)
+	checkState := func() error {
+		current, err := options.Snapshot(ctx)
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(current, state) {
+			return errors.New("mounted mirror state changed during copy operation")
+		}
+		return nil
+	}
+	for _, path := range roots.Paths() {
+		batch := writes[path]
+		if len(batch) == 0 {
+			continue
+		}
+		if err := checkState(); err != nil {
+			return err
+		}
+		if err := lib.WithWriteDisk(ctx, roots, path, func() error {
+			if err := checkState(); err != nil {
+				return err
+			}
+			return apply(ctx, roots, batch, false, options.Output)
+		}); err != nil {
+			return err
 		}
 	}
-	guard, err := lib.NewDirectoryGuard(ctx, roots, destinations)
-	if err != nil {
-		return err
-	}
-	current, err := options.Snapshot(ctx)
-	if err != nil {
-		return err
-	}
-	if !reflect.DeepEqual(current, state) {
-		return errors.New("mounted mirror state changed during planning")
-	}
-	defer func() {
-		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		returnErr = errors.Join(returnErr, guard.Relock(cleanup))
-	}()
-	if err := guard.SetLocked(ctx, false); err != nil {
-		return err
-	}
-	return apply(ctx, roots, actions, false, options.Output)
+	return ctx.Err()
 }
 func plan(ctx context.Context, roots *rootfs.Set) ([]action, error) {
 	observations, err := repaircopies.Scan(ctx, roots)

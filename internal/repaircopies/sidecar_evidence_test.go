@@ -97,6 +97,7 @@ func TestSidecarOnlyEvidenceSurvivesLogResumeAndCompletion(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer j.Close()
+	lockTestRoots(t, roots)
 	for range 2 { // Desired target state remains resumable; evidence stays unchanged.
 		if err := ValidateCurrentState(context.Background(), loaded, testRoots(t, roots)); err != nil {
 			t.Fatal(err)
@@ -107,7 +108,7 @@ func TestSidecarOnlyEvidenceSurvivesLogResumeAndCompletion(t *testing.T) {
 				p.Error = failure.Error()
 			}
 			return j.Append(p)
-		}); err != nil {
+		}, nil); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -228,6 +229,7 @@ func (w changeEvidenceAfterRepair) Write(data []byte) (int, error) {
 
 func TestCompletionRevalidatesSidecarOnlyEvidence(t *testing.T) {
 	log, roots := sidecarEvidenceFixture(t)
+	lockTestRoots(t, roots)
 	writer := changeEvidenceAfterRepair{path: filepath.Join(roots[0], "item.b2sum")}
 	if err := Apply(context.Background(), log, testRoots(t, roots), false, writer); err == nil || !strings.Contains(err.Error(), "sidecar-only evidence changed") {
 		t.Fatalf("completed with changed evidence: %v", err)
@@ -261,6 +263,7 @@ func TestMalformedSidecarOnlyEvidenceIsPreservedWithoutVoting(t *testing.T) {
 	if copy := log.Repairs[0].Copies[0]; copy.Sidecar == nil || copy.Sidecar.Value != "" || copy.Sidecar.Hash != checksumBytes([]byte("malformed")) {
 		t.Fatalf("malformed evidence lost or promoted to a vote: %+v", copy)
 	}
+	lockTestRoots(t, roots)
 	if err := Apply(context.Background(), log, testRoots(t, roots), false, io.Discard); err != nil {
 		t.Fatal(err)
 	}

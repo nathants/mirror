@@ -10,7 +10,7 @@ import (
 	"mirror/internal/mountdisks"
 )
 
-func TestImmediatePublicationChecksRejectDriftAfterFileValidation(t *testing.T) {
+func TestRepairRejectsDriftBetweenPublications(t *testing.T) {
 	for _, changed := range []string{"source", "destination data", "destination sidecar", "metadata-only destination", "repaired destination data"} {
 		t.Run(changed, func(t *testing.T) {
 			home, base := t.TempDir(), t.TempDir()
@@ -33,6 +33,7 @@ func TestImmediatePublicationChecksRejectDriftAfterFileValidation(t *testing.T) 
 				writeMirrorFile(t, filepath.Join(roots[1], name), []byte(data), "malformed sidecar")
 				writeMirrorFile(t, filepath.Join(roots[2], name), []byte("good"), good)
 			}
+			lockTestRoots(t, roots)
 			boundary := "repaired checksumfile: " + filepath.Join(roots[0], "item.b2sum")
 			if changed == "repaired destination data" {
 				boundary = "repaired file: " + filepath.Join(roots[1], "item")
@@ -45,8 +46,8 @@ func TestImmediatePublicationChecksRejectDriftAfterFileValidation(t *testing.T) 
 				Confirm: func(context.Context) error { return nil },
 				Output: absenceOutput(func(p []byte) (int, error) {
 					if !drifted && strings.Contains(string(p), boundary) {
-						// File validation has finished, but an earlier publication
-						// separates it from the next data or metadata mutation.
+						// Drift may occur between disk batches, or between a
+						// payload replacement and its sidecar publication.
 						path := filepath.Join(roots[1], "item")
 						if changed == "source" {
 							path = filepath.Join(roots[0], "item")
@@ -72,7 +73,7 @@ func TestImmediatePublicationChecksRejectDriftAfterFileValidation(t *testing.T) 
 			case "destination data", "metadata-only destination", "repaired destination data":
 				wantData = "drift"
 			case "destination sidecar":
-				wantData, wantSidecar = "good", "drift" // Completed data is not rolled back.
+				wantSidecar = "drift" // Revalidation stops before replacing data.
 			}
 			for name, want := range map[string]string{"item": wantData, "item.b2sum": wantSidecar, "later": "bad"} {
 				data, err := os.ReadFile(filepath.Join(roots[1], name))
@@ -80,9 +81,15 @@ func TestImmediatePublicationChecksRejectDriftAfterFileValidation(t *testing.T) 
 					t.Fatalf("unexpected publication at %s: %q %v", name, data, err)
 				}
 			}
+			// The first disk's batch ingested both sidecars before the second
+			// disk encountered the drift. No later work on that disk may run.
+			data, err := os.ReadFile(filepath.Join(roots[0], "later.b2sum"))
+			if err != nil || string(data) != good {
+				t.Fatalf("earlier batch's publication lost: %q %v", data, err)
+			}
 			log, err := Load(filepath.Join(home, ".mirror", repairLogName))
-			if err != nil || log.Repairs[0].State != RepairFailed || log.Repairs[1].State != RepairPending {
-				t.Fatalf("late drift did not stop later work: %+v %v", log, err)
+			if err != nil || log.Repairs[0].State != RepairFailed || log.Repairs[1].State != RepairStarted {
+				t.Fatalf("late drift lost partial disk progress: %+v %v", log, err)
 			}
 		})
 	}

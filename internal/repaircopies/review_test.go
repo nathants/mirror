@@ -91,8 +91,12 @@ func TestReviewCompletionRequiresDesiredBytes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	lockTestRoots(t, []string{a, b})
 	writer := &restoreScannedBytes{path: filepath.Join(b, "item")}
 	if err := Apply(context.Background(), log, testRoots(t, []string{a, b}), false, writer); err == nil {
 		t.Fatal("Apply reported completion with original corrupt bytes restored")
+	}
+	if !writer.done {
+		t.Fatal("did not reach the post-publication drift injection")
 	}
 }

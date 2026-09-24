@@ -112,6 +112,7 @@ func TestTypeConflictsRemainUnresolvedWithoutBlockingSafeRepairs(t *testing.T) {
 			if !strings.Contains(output.String(), "entry type conflict") || !strings.Contains(output.String(), conflictPath) || !strings.Contains(output.String(), test.kind) {
 				t.Fatalf("report concealed type-conflict evidence: %s", &output)
 			}
+			lockTestRoots(t, roots)
 			for _, preview := range []bool{true, false} {
 				if err := Run(ctx, home, preview, true, options); !errors.Is(err, ErrUnresolved) {
 					t.Fatalf("resume did not preserve the independent safe subset: %v", err)
@@ -152,6 +153,7 @@ func TestTypeConflictsRemainUnresolvedWithoutBlockingSafeRepairs(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
+			lockTestRoots(t, roots)
 			if err := Run(ctx, home, false, true, options); !errors.Is(err, ErrUnresolved) || confirmations != 1 {
 				t.Fatalf("resume reinterpreted conflict evidence: confirmations=%d err=%v", confirmations, err)
 			}

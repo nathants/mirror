@@ -38,6 +38,7 @@ func partialFixture(t *testing.T) (string, []string, Options) {
 
 func TestRunRepairsSafeSubsetAndRetainsEveryUnresolvedFinding(t *testing.T) {
 	home, roots, options := partialFixture(t)
+	lockTestRoots(t, roots)
 	var output strings.Builder
 	options.Output = &output
 	confirmed := false

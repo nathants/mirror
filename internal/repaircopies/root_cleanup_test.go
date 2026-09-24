@@ -29,6 +29,7 @@ func TestRepairCleanupRelocksOriginalRootNotReplacement(t *testing.T) {
 	good := checksumBytes([]byte("good"))
 	writeMirrorFile(t, filepath.Join(roots[0], "books/item"), []byte("good"), good)
 	writeMirrorFile(t, filepath.Join(roots[1], "books/item"), []byte("bad"), good)
+	lockTestRoots(t, roots)
 	replaced := false
 	options := Options{
 		Output:  io.Discard,

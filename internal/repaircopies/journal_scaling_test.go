@@ -24,6 +24,7 @@ func TestCheckpointWriteVolumeIsLinear(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = os.Chmod(root, 0700) })
 		}
+		lockTestRoots(t, roots)
 		var written int64
 		checkpoints := 0
 		path := filepath.Join(home, ".mirror", repairLogName)

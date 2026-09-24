@@ -82,12 +82,13 @@ func TestRunPreviewPublicationAndIdempotence(t *testing.T) {
 	}
 	requireAbsent(t, filepath.Join(roots[1], "books/item"))
 	requireAbsent(t, filepath.Join(roots[1], "link"))
+	lockTestRoots(t, roots)
 	output.Reset()
 	calls = 0
 	if err := Run(ctx, false, options); err != nil {
 		t.Fatal(err)
 	}
-	if calls != 2 || strings.Count(output.String(), "published ") != 3 {
+	if calls != 5 || strings.Count(output.String(), "published ") != 3 {
 		t.Fatalf("calls=%d output=%q", calls, &output)
 	}
 	for _, root := range roots {
@@ -117,6 +118,7 @@ func TestRunStopsAndRelocksAfterOutputFailureOrCancellation(t *testing.T) {
 	for _, cancelRun := range []bool{false, true} {
 		t.Run(map[bool]string{false: "output", true: "cancellation"}[cancelRun], func(t *testing.T) {
 			roots := workflowRoots(t)
+			lockTestRoots(t, roots)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			want := errors.New("output unavailable")
@@ -152,6 +154,7 @@ func TestRunRevalidatesBeforeUnlockOrPublication(t *testing.T) {
 	for _, failure := range []string{"initial inventory", "revalidation inventory", "root drift", "configured count drift"} {
 		t.Run(failure, func(t *testing.T) {
 			roots := workflowRoots(t)
+			lockTestRoots(t, roots)
 			inventoryErr := errors.New("inventory failed")
 			calls := 0
 			err := Run(context.Background(), false, Options{Output: io.Discard, Snapshot: func(context.Context) (mountdisks.Snapshot, error) {
@@ -177,8 +180,8 @@ func TestRunRevalidatesBeforeUnlockOrPublication(t *testing.T) {
 				t.Fatalf("lost inventory error: %v", err)
 			}
 			for _, root := range roots {
-				requireMode(t, root, 0700)
-				requireMode(t, filepath.Join(root, "books"), 0755)
+				requireMode(t, root, 0544)
+				requireMode(t, filepath.Join(root, "books"), 0544)
 				requireAbsent(t, filepath.Join(root, "books/item.b2sum"))
 			}
 			requireAbsent(t, filepath.Join(roots[1], "books/item"))

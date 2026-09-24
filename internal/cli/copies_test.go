@@ -106,6 +106,11 @@ func TestCopyHandlersRunRealWorkflowsThroughCLIStreams(t *testing.T) {
 					t.Fatalf("preview changed root: %v %v", info, err)
 				}
 			}
+			for _, root := range roots {
+				if err := os.Chmod(root, 0544); err != nil {
+					t.Fatal(err)
+				}
+			}
 			output.Reset()
 			if command == "repair-copies" {
 				if code := exec(command, "--resume"); code != 1 || !strings.Contains(diagnostic.String(), confirmationErr.Error()) {

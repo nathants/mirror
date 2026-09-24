@@ -248,3 +248,119 @@ func openTestGuard(t *testing.T, paths, destinations []string) (*DirectoryGuard,
 	})
 	return NewDirectoryGuard(context.Background(), roots, destinations)
 }
+
+func TestWriteWindowRequiresLockedPeersAndPreservesReaders(t *testing.T) {
+	for _, unlocked := range []string{"none", "destination", "reader root", "reader child"} {
+		t.Run(unlocked, func(t *testing.T) {
+			paths := []string{filepath.Join(t.TempDir(), "a"), filepath.Join(t.TempDir(), "b")}
+			for _, path := range paths {
+				guardTree(t, path)
+				t.Cleanup(func() { makeGuardTreeWritable(path) })
+			}
+			guard, err := openTestGuard(t, paths, paths)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := guard.SetLocked(context.Background(), true); err != nil {
+				t.Fatal(err)
+			}
+			for _, rel := range []string{".", "a", "b", "b/child"} {
+				if err := os.Chmod(filepath.Join(paths[1], rel), 0500); err != nil {
+					t.Fatal(err)
+				}
+			}
+			changed := ""
+			switch unlocked {
+			case "destination":
+				changed = paths[0]
+			case "reader root":
+				changed = paths[1]
+			case "reader child":
+				changed = filepath.Join(paths[1], "b/child")
+			}
+			if changed != "" {
+				if err := os.Chmod(changed, 0744); err != nil {
+					t.Fatal(err)
+				}
+			}
+			called := false
+			err = WithWriteDisk(context.Background(), guard.roots, paths[0], func() error {
+				called = true
+				for _, rel := range []string{".", "a", "b", "b/child"} {
+					assertGuardMode(t, filepath.Join(paths[0], rel), 0744)
+					assertGuardMode(t, filepath.Join(paths[1], rel), 0500)
+				}
+				return os.WriteFile(filepath.Join(paths[0], "a/item"), []byte("written"), 0600)
+			})
+			if (err != nil) != (changed != "") || called != (changed == "") {
+				t.Fatalf("called=%v error=%v", called, err)
+			}
+			for i, path := range paths {
+				for _, rel := range []string{".", "a", "b", "b/child"} {
+					want := os.FileMode(0544)
+					if i == 1 {
+						want = 0500
+					}
+					full := filepath.Join(path, rel)
+					if full == changed {
+						want = 0744
+					}
+					assertGuardMode(t, full, want)
+				}
+			}
+		})
+	}
+}
+
+func TestWriteWindowRelocksAfterPartialUnlockCancellation(t *testing.T) {
+	paths := []string{filepath.Join(t.TempDir(), "a"), filepath.Join(t.TempDir(), "b")}
+	for _, path := range paths {
+		guardTree(t, path)
+		t.Cleanup(func() { makeGuardTreeWritable(path) })
+	}
+	guard, err := openTestGuard(t, paths, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := guard.SetLocked(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	partial := cancelAfterDirectoryUnlock{Context: ctx, cancel: cancel, path: filepath.Join(paths[0], "a")}
+	err = WithWriteDisk(partial, guard.roots, paths[0], func() error {
+		t.Fatal("publication reached after partial unlock cancellation")
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("lost cancellation: %v", err)
+	}
+	for _, path := range paths {
+		for _, rel := range []string{".", "a", "b", "b/child"} {
+			assertGuardMode(t, filepath.Join(path, rel), 0544)
+		}
+	}
+}
+
+func TestWriteWindowReportsRelockFailure(t *testing.T) {
+	paths := []string{filepath.Join(t.TempDir(), "a"), filepath.Join(t.TempDir(), "b")}
+	for _, path := range paths {
+		guardTree(t, path)
+		t.Cleanup(func() { makeGuardTreeWritable(path) })
+	}
+	guard, err := openTestGuard(t, paths, paths)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := guard.SetLocked(context.Background(), true); err != nil {
+		t.Fatal(err)
+	}
+	err = WithWriteDisk(context.Background(), guard.roots, paths[0], func() error {
+		return guard.roots.Close() // Lost descriptors make cleanup unavailable.
+	})
+	if err == nil {
+		t.Fatal("unavailable relocking reported success")
+	}
+	assertGuardMode(t, paths[1], 0544)
+	assertGuardMode(t, filepath.Join(paths[1], "b/child"), 0544)
+}

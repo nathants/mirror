@@ -64,13 +64,16 @@ func TestRunUnlocksOnlyWriteDestinations(t *testing.T) {
 					},
 					Output: inspectingOutput(func(p []byte) (int, error) {
 						writes++
-						sourceMode := os.FileMode(0500)
+						sourceMode, destinationMode := os.FileMode(0500), os.FileMode(0744)
 						if contents == "missing sidecar" {
-							sourceMode = 0744
+							sourceMode = 0544
+							if writes == 1 {
+								sourceMode, destinationMode = 0744, 0544
+							}
 						}
 						for _, rel := range []string{".", "books"} {
 							requireMode(t, filepath.Join(roots[0], rel), sourceMode)
-							requireMode(t, filepath.Join(roots[1], rel), 0744)
+							requireMode(t, filepath.Join(roots[1], rel), destinationMode)
 						}
 						if outcome == "output failure" {
 							return 0, outputErr
@@ -134,6 +137,7 @@ func TestRunRejectsReadOnlySourceIdentityReplacement(t *testing.T) {
 		t.Run(phase, func(t *testing.T) {
 			roots := workflowRoots(t)
 			ingestSource(t, roots[0])
+			lockTestRoots(t, roots)
 			for _, rel := range []string{".", "books"} {
 				if err := os.Chmod(filepath.Join(roots[0], rel), 0500); err != nil {
 					t.Fatal(err)
@@ -216,6 +220,7 @@ func TestRunRejectsReadOnlySourceIdentityReplacement(t *testing.T) {
 func TestRunRevalidatesReadOnlySourceBeforeUnlock(t *testing.T) {
 	roots := workflowRoots(t)
 	ingestSource(t, roots[0])
+	lockTestRoots(t, roots)
 	calls := 0
 	err := Run(context.Background(), false, Options{
 		Output: io.Discard,
@@ -232,8 +237,8 @@ func TestRunRevalidatesReadOnlySourceBeforeUnlock(t *testing.T) {
 		t.Fatalf("source drift not rejected: %v", err)
 	}
 	requireMode(t, roots[0], 0544)
-	requireMode(t, roots[1], 0700)
-	requireMode(t, filepath.Join(roots[1], "books"), 0755)
+	requireMode(t, roots[1], 0544)
+	requireMode(t, filepath.Join(roots[1], "books"), 0544)
 	requireAbsent(t, filepath.Join(roots[1], "books/item"))
 	requireAbsent(t, filepath.Join(roots[1], "link"))
 }

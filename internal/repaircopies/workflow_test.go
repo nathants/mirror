@@ -89,6 +89,7 @@ func TestScanAndRepairMissingMalformedMetadataWithoutIngest(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			lockTestRoots(t, roots)
 			if err := Apply(context.Background(), log, testRoots(t, roots), false, io.Discard); err != nil {
 				t.Fatal(err)
 			}
@@ -173,6 +174,7 @@ func TestCancelledRepairRetainsPendingLogAndRelocks(t *testing.T) {
 	good := checksumBytes([]byte("good"))
 	writeMirrorFile(t, filepath.Join(roots[0], "item"), []byte("good"), good)
 	writeMirrorFile(t, filepath.Join(roots[1], "item"), []byte("bad"), good)
+	lockTestRoots(t, roots)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	writer := &cancelAfterOutput{cancel: cancel}
@@ -256,6 +258,7 @@ func TestQuarantineSupportsMaximumSidecarFilename(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	lockTestRoots(t, roots)
 	if err := Apply(context.Background(), log, testRoots(t, roots), false, io.Discard); err != nil {
 		t.Fatal(err)
 	}

@@ -30,6 +30,7 @@ func TestRepairKeepsPlanningRootsThroughApplication(t *testing.T) {
 			good := checksumBytes([]byte("good"))
 			writeMirrorFile(t, filepath.Join(roots[0], "item"), []byte("good"), good)
 			writeMirrorFile(t, filepath.Join(roots[1], "item"), []byte("bad"), good)
+			lockTestRoots(t, roots)
 			replaced := false
 			replace := func() {
 				t.Helper()
@@ -71,7 +72,7 @@ func TestRepairKeepsPlanningRootsThroughApplication(t *testing.T) {
 				}
 				info, err := os.Stat(root)
 				want := os.FileMode(0700)
-				if root == original && phase == "after unlock" {
+				if root == original {
 					want = 0544
 				}
 				if err != nil || info.Mode().Perm() != want {

@@ -41,6 +41,7 @@ func TestRepairRevalidatesPreviouslyAbsentCopies(t *testing.T) {
 					t.Fatal(err)
 				}
 
+				lockTestRoots(t, roots)
 				added := false
 				introduceEvidence := func() {
 					t.Helper()
@@ -52,7 +53,13 @@ func TestRepairRevalidatesPreviouslyAbsentCopies(t *testing.T) {
 						path += checksumSuffix
 						data = y
 					}
+					if err := os.Chmod(roots[2], 0744); err != nil {
+						t.Fatal(err)
+					}
 					if err := os.WriteFile(path, []byte(data), 0600); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.Chmod(roots[2], 0544); err != nil {
 						t.Fatal(err)
 					}
 					added = true

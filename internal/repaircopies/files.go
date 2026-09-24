@@ -264,7 +264,8 @@ func ValidateCurrentState(ctx context.Context, log Log, rs *rootfs.Set) error {
 	if err := prepare(ctx, log, rs); err != nil {
 		return err
 	}
-	return validateFiles(ctx, log, rs, false)
+	_, err := validateFiles(ctx, log, rs, false)
+	return err
 }
 func prepare(ctx context.Context, log Log, rs *rootfs.Set) error {
 	if err := validateLog(log); err != nil {
@@ -280,13 +281,16 @@ func prepare(ctx context.Context, log Log, rs *rootfs.Set) error {
 	}
 	return rs.Check(ctx)
 }
-func validateFiles(ctx context.Context, log Log, rs *rootfs.Set, complete bool) error {
-	for _, repair := range log.Repairs {
-		if _, err := validateRepair(ctx, repair, rs, complete || repair.State == RepairCompleted); err != nil {
-			return err
+func validateFiles(ctx context.Context, log Log, rs *rootfs.Set, complete bool) ([]verifiedRepair, error) {
+	verified := make([]verifiedRepair, len(log.Repairs))
+	for i, repair := range log.Repairs {
+		current, err := validateRepair(ctx, repair, rs, complete || repair.State == RepairCompleted)
+		if err != nil {
+			return nil, err
 		}
+		verified[i] = current
 	}
-	return ctx.Err()
+	return verified, ctx.Err()
 }
 
 // verifiedRepair is short-lived evidence for one immediate application. Source
