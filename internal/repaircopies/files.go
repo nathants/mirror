@@ -472,13 +472,19 @@ func PublishMissingSidecar(ctx context.Context, root *rootfs.Root, path, checksu
 	if !validChecksum(checksum) {
 		return errors.New("invalid checksum")
 	}
+	_, err := publishSidecar(ctx, root, path, checksum, "")
+	return err
+}
+
+// A file-wide validation can precede other publications. Recheck this payload
+// at the metadata boundary instead of writing a checksum from stale evidence.
+func publishSidecar(ctx context.Context, root *rootfs.Root, path, checksum, oldHash string) (string, error) {
 	actual, err := checksumFile(ctx, root, path)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if actual != checksum {
-		return fmt.Errorf("file changed before metadata publication: %s", path)
+		return "", fmt.Errorf("file changed before metadata publication: %s", path)
 	}
-	_, err = replace(ctx, root, path+checksumSuffix, "", checksumBytes([]byte(checksum)), func(file *os.File) error { _, err := io.WriteString(file, checksum); return err })
-	return err
+	return replace(ctx, root, path+checksumSuffix, oldHash, checksumBytes([]byte(checksum)), func(file *os.File) error { _, err := io.WriteString(file, checksum); return err })
 }

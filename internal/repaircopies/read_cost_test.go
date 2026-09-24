@@ -78,9 +78,10 @@ func TestMetadataRepairDoesNotRehashToRediscoverSources(t *testing.T) {
 					offset += unix.SizeofInotifyEvent + length
 				}
 			}
-			// Confirmation/resume validation, per-file preapplication, durable
-			// completion, and final verification; fresh runs also scan once.
-			limit := 5
+			// Confirmation/resume validation, per-file preapplication, immediate
+			// metadata-publication validation, durable completion, and final
+			// verification; fresh runs also scan once.
+			limit := 6
 			if resume {
 				limit--
 			}

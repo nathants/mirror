@@ -118,7 +118,7 @@ func applyRepair(ctx context.Context, repair Repair, rs *rootfs.Set, preview boo
 				if sidecar != nil {
 					oldHash = sidecar.Hash
 				}
-				backup, err := replace(ctx, root, sidecarPath, oldHash, checksumBytes([]byte(repair.Checksum)), func(f *os.File) error { _, err := io.WriteString(f, repair.Checksum); return err })
+				backup, err := publishSidecar(ctx, root, repair.RelPath, repair.Checksum, oldHash)
 				if err != nil {
 					return fmt.Errorf("repair sidecar %s: %w", sidecarPath, err)
 				}
