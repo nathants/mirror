@@ -280,6 +280,27 @@ func validateFiles(ctx context.Context, log Log, rs roots, complete bool) error 
 }
 
 func validateRepair(ctx context.Context, repair Repair, rs roots, complete bool) error {
+	observed := make(map[string]bool, len(repair.Copies))
+	for _, copy := range repair.Copies {
+		observed[copy.Root] = true
+	}
+	// An omitted mounted mirror supplied no evidence for this path. New data
+	// or metadata could change consensus; neither may appear during resume,
+	// application, or completion without a fresh scan.
+	for path, root := range rs {
+		if observed[path] {
+			continue
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := root.Check(); err != nil {
+			return err
+		}
+		if err := CheckMissingDestination(ctx, root, repair.RelPath); err != nil {
+			return fmt.Errorf("unobserved repair paths must remain absent; inspect the evidence and run a fresh scan: %w", err)
+		}
+	}
 	hasSource := false
 	for _, copy := range repair.Copies {
 		root := rs[copy.Root]
