@@ -129,7 +129,10 @@ func TestFailureAfterSideEffectRecordsUncertaintyAndIndependentObservations(t *t
 					if unknown {
 						return nil, errors.New("inventory unavailable")
 					}
-					return []byte(`{"source":"/dev/mapper/sde","target":"/home/test/mnt.sde","serial":"known-disk"}`), nil
+					if name == "lsblk" {
+						return []byte(`{"blockdevices":[{"path":"/dev/sde","serial":"known-disk"}]}`), nil
+					}
+					return []byte(`{"filesystems":[{"source":"/dev/mapper/sde","target":"/home/test/mnt.sde"}]}`), nil
 				},
 			}
 			system := &System{Backend: backend, Log: log, Context: ctx}

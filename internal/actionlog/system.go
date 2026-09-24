@@ -7,6 +7,8 @@ import (
 	"io"
 	"os"
 	"time"
+
+	"mirror/internal/inventory"
 )
 
 // Backend is the shared OS boundary used by format and mount. Read-only path
@@ -77,17 +79,25 @@ func (s *System) inspect() error {
 	message := "No automatic rollback was attempted. A failed action may have taken effect; mounted filesystems and decrypted mappers may remain active. Review the action log and verify disk identity before manual intervention. Do not rerun format just to retry opening or mounting."
 	_, outputErr := fmt.Fprintln(s.Log.output, message)
 	// Use independent bounded read-only commands even when the operation was
-	// cancelled. Store the raw structured state instead of inventing an inferred
-	// success/failure state or adding a second storage-policy parser here.
+	// cancelled. Validate representation with the shared parsers, not storage
+	// eligibility or an inferred success/recovery state, and retain raw evidence.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	var failures []error
 	failures = append(failures, outputErr)
 	for _, command := range [][]string{
-		{"lsblk", "--json", "--bytes", "--paths", "--output", "PATH,KNAME,PKNAME,MAJ:MIN,SIZE,TYPE,FSTYPE,PTUUID,UUID,PARTUUID,MOUNTPOINTS,MODEL,SERIAL,WWN,RO"},
+		{"lsblk", "--json", "--bytes", "--paths", "--output", inventory.BlockColumns},
 		{"findmnt", "--json", "--list", "--output", "SOURCE,TARGET"},
 	} {
 		data, err := s.Backend.Output(ctx, command[0], command[1:]...)
+		if err == nil {
+			switch command[0] {
+			case "lsblk":
+				_, err = inventory.ParseBlocks(data)
+			case "findmnt":
+				_, err = inventory.ParseMounts(data)
+			}
+		}
 		failures = append(failures, s.Log.observation(command[0], command[1:], data, err, true))
 	}
 	return errors.Join(failures...)

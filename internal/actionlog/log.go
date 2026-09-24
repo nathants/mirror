@@ -143,17 +143,18 @@ func (l *Log) observation(name string, args []string, data []byte, observedErr e
 		kind = "failure-diagnostic"
 	}
 	value := event{Kind: kind, Name: name, Args: args, Status: "observed"}
+	// Classification and evidence retention are independent. Failed or
+	// schema-invalid diagnostics may still contain useful raw observations.
+	if observedErr == nil || diagnostic {
+		if json.Valid(data) {
+			value.Data = data
+		} else {
+			value.Text = string(data)
+		}
+	}
 	if observedErr != nil {
 		value.Status = "unknown"
 		value.Error = observedErr.Error()
-	} else if json.Valid(data) {
-		value.Data = data
-	} else {
-		value.Text = string(data)
-		if diagnostic {
-			value.Status = "unknown"
-			value.Error = "read-only inventory did not return valid JSON"
-		}
 	}
 	err := l.record(value)
 	if diagnostic {
