@@ -48,8 +48,7 @@ func TestCopyHandlersRunRealWorkflowsThroughCLIStreams(t *testing.T) {
 				}
 				t.Cleanup(func() { _ = os.Chmod(root, 0700) })
 			}
-			ctx, cancel := context.WithCancel(context.Background())
-			defer cancel()
+			ctx := t.Context()
 			var output, diagnostic bytes.Buffer
 			input := strings.NewReader("do not read piped confirmation")
 			assertLock := func() {

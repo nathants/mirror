@@ -167,7 +167,7 @@ func postcheck(targetDisk string) error {
 		return err
 	}
 	version := ""
-	for _, line := range strings.Split(luksDump, "\n") {
+	for line := range strings.SplitSeq(luksDump, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 2 && fields[0] == "Version:" {
 			version = fields[1]
@@ -182,7 +182,7 @@ func postcheck(targetDisk string) error {
 		return err
 	}
 	reservedBlocks := ""
-	for _, line := range strings.Split(filesystemState, "\n") {
+	for line := range strings.SplitSeq(filesystemState, "\n") {
 		if value, ok := strings.CutPrefix(line, "Reserved block count:"); ok {
 			reservedBlocks = strings.TrimSpace(value)
 			break

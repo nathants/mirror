@@ -253,16 +253,14 @@ func TestConcurrentInvocationsDoNotOverwriteEachOther(t *testing.T) {
 	home := t.TempDir()
 	var wg sync.WaitGroup
 	for range 10 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			log, err := Open(home, os.Geteuid(), os.Getegid(), []string{"--help"}, io.Discard)
 			if err != nil {
 				t.Error(err)
 				return
 			}
 			log.Close(0)
-		}()
+		})
 	}
 	wg.Wait()
 	entries, err := os.ReadDir(filepath.Join(home, directory))

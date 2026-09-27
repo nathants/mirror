@@ -57,8 +57,7 @@ func requireAbsent(t *testing.T, path string) {
 
 func TestRunPreviewPublicationAndIdempotence(t *testing.T) {
 	roots := workflowRoots(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	var output bytes.Buffer
 	calls := 0
 	options := Options{Output: &output, Snapshot: func(got context.Context) (mountdisks.Snapshot, error) {

@@ -148,7 +148,7 @@ func (r *Root) MkdirAll(path string, mode os.FileMode) error {
 		return nil
 	}
 	current := ""
-	for _, part := range strings.Split(path, "/") {
+	for part := range strings.SplitSeq(path, "/") {
 		current = filepath.Join(current, part)
 		err := r.Mkdir(current, mode)
 		if err != nil && !errors.Is(err, os.ErrExist) {
