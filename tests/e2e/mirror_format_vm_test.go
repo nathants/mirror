@@ -154,8 +154,8 @@ func interactiveOutput(ctx context.Context, directory, name string, interactions
 	if err != nil {
 		return nil, err
 	}
-	defer input.Close()
-	defer answers.Close()
+	defer func() { _ = input.Close() }()
+	defer func() { _ = answers.Close() }()
 	closed := make(chan struct{})
 	stop := context.AfterFunc(ctx, func() {
 		_ = answers.Close() // unblock a response write if the command stops reading

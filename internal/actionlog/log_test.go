@@ -38,12 +38,12 @@ func openTestLog(t *testing.T, operation string, output io.Writer) (*Log, string
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { lock.Close() })
+	t.Cleanup(func() { _ = lock.Close() })
 	log, err := Open(home, operation, os.Getuid(), os.Getgid(), output)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { log.Close() })
+	t.Cleanup(func() { _ = log.Close() })
 	return log, home
 }
 
@@ -53,7 +53,7 @@ func readEvents(t *testing.T, path string) []event {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	decoder := json.NewDecoder(file)
 	var events []event
 	for {
@@ -72,7 +72,7 @@ func TestActionStartIsPersistedBeforeInvocationAndPasswordsAreNotLogged(t *testi
 	log, _ := openTestLog(t, "mount", &output)
 	const password = "never-log-this-passphrase"
 	called := false
-	backend := fakeBackend{run: func(_ context.Context, input io.Reader, name string, args []string) error {
+	backend := fakeBackend{run: func(_ context.Context, input io.Reader, name string, _ []string) error {
 		called = true
 		events := readEvents(t, log.Path())
 		last := events[len(events)-1]
@@ -186,7 +186,7 @@ func TestPrivateLogsAreRetainedAcrossInvocations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer second.Close()
+	defer func() { _ = second.Close() }()
 	if first.Path() == second.Path() {
 		t.Fatal("overwrote prior operation log")
 	}
@@ -217,7 +217,7 @@ func TestLogRejectsSymlinkDirectory(t *testing.T) {
 	}
 	log, err := Open(home, "format", os.Getuid(), os.Getgid(), io.Discard)
 	if log != nil {
-		log.Close()
+		_ = log.Close()
 	}
 	if err == nil {
 		t.Fatal("followed action log directory symlink")

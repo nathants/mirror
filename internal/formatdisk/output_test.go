@@ -110,12 +110,12 @@ func TestFormatFinalOutputFailureIsJournaledAsUncertain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lock.Close()
+	defer func() { _ = lock.Close() }()
 	log, err := actionlog.Open(home, "format", os.Getuid(), os.Getgid(), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer log.Close()
+	defer func() { _ = log.Close() }()
 	fake := newFakeSystem()
 	observed := &actionlog.System{Backend: fake, Log: log, Context: ctx}
 	err = Run(ctx, observed, strings.NewReader("/dev/sdz\n/dev/sdz\n"), &failingDisplay{match: "formatted and mounted"}, io.Discard, Options{HomeDir: "/home/test", PartitionPollAttempts: 2})

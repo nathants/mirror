@@ -30,12 +30,12 @@ func TestFormatLogsPartialActionsWithoutUnmounting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lock.Close()
+	defer func() { _ = lock.Close() }()
 	log, err := actionlog.Open(home, "format", os.Getuid(), os.Getgid(), io.Discard)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer log.Close()
+	defer func() { _ = log.Close() }()
 	fake := newFakeSystem()
 	observed := &actionlog.System{Backend: uncertainFormatSystem{fake}, Log: log, Context: context.Background()}
 	err = Run(context.Background(), observed, strings.NewReader("/dev/sdz\n/dev/sdz\n"), io.Discard, io.Discard, Options{HomeDir: "/home/test", OwnerUID: 1234, OwnerGID: 5678, PartitionPollAttempts: 2})

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -67,14 +68,14 @@ func newFakeSystem() *fakeSystem {
 func (f *fakeSystem) Output(_ context.Context, name string, args ...string) ([]byte, error) {
 	// Device-free version probes are not storage actions. Keep them out of
 	// existing command-count assertions; tool tests record/assert them separately.
-	if contains(args, "--version") || (name == "mkfs.ext4" && contains(args, "-V")) {
+	if slices.Contains(args, "--version") || (name == "mkfs.ext4" && slices.Contains(args, "-V")) {
 		return []byte("test tool version\n"), nil
 	}
 	f.calls = append(f.calls, recordedCall{kind: "output", rawName: name, name: name, args: append([]string(nil), args...)})
 
 	switch name {
 	case "lsblk":
-		if contains(args, "--nodeps") {
+		if slices.Contains(args, "--nodeps") {
 			return marshalLSBLK(f.rootDevice()), nil
 		}
 		f.inspectCount++
@@ -113,7 +114,7 @@ func (f *fakeSystem) Output(_ context.Context, name string, args ...string) ([]b
 		}
 		return marshalLSBLK(devices...), nil
 	case "findmnt":
-		if contains(args, "--json") {
+		if slices.Contains(args, "--json") {
 			root := inventory.Mount{Target: "/"}
 			if f.mountpointBusy {
 				root.Children = append(root.Children, inventory.Mount{Target: f.mountPath})
@@ -123,7 +124,7 @@ func (f *fakeSystem) Output(_ context.Context, name string, args ...string) ([]b
 			}
 			return marshalFindmnt(root), nil
 		}
-		if contains(args, "--target") && f.mounted {
+		if slices.Contains(args, "--target") && f.mounted {
 			if f.wrongMountedSource {
 				return []byte("/dev/mapper/wrong\n"), nil
 			}
@@ -288,15 +289,6 @@ func marshalFindmnt(filesystems ...inventory.Mount) []byte {
 	return data
 }
 
-func contains(values []string, wanted string) bool {
-	for _, value := range values {
-		if value == wanted {
-			return true
-		}
-	}
-	return false
-}
-
 func runFake(input string, system *fakeSystem, configure ...func(*Options)) (string, string, error) {
 	option := Options{
 		HomeDir:               "/home/test",
@@ -321,7 +313,7 @@ func destructiveCalls(calls []recordedCall) []recordedCall {
 		case "chown", "fdisk", "mkfs.ext4", "mount", "umount":
 			result = append(result, call)
 		case "cryptsetup":
-			if contains(call.args, "luksFormat") || contains(call.args, "open") || contains(call.args, "close") {
+			if slices.Contains(call.args, "luksFormat") || slices.Contains(call.args, "open") || slices.Contains(call.args, "close") {
 				result = append(result, call)
 			}
 		}
@@ -332,7 +324,7 @@ func destructiveCalls(calls []recordedCall) []recordedCall {
 func countCalls(calls []recordedCall, name string, argument string) int {
 	count := 0
 	for _, call := range calls {
-		if call.name == name && (argument == "" || contains(call.args, argument)) {
+		if call.name == name && (argument == "" || slices.Contains(call.args, argument)) {
 			count++
 		}
 	}

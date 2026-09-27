@@ -56,13 +56,13 @@ func TestActionLogExplainsPartialMountAndUnmountWithoutRollback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer lock.Close()
+			defer func() { _ = lock.Close() }()
 			var output bytes.Buffer
 			log, err := actionlog.Open(home, test.operation, os.Getuid(), os.Getgid(), &output)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer log.Close()
+			defer func() { _ = log.Close() }()
 			observed := &actionlog.System{Backend: backend, Log: log, Context: ctx}
 			option := options(t, func() ([]byte, error) { return []byte("private passphrase"), nil }, fake.identifier)
 			if test.operation == "mount" {

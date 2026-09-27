@@ -52,7 +52,7 @@ func open(home string, uid, gid int, args []string, warnings io.Writer, now time
 	if err != nil {
 		return nil, err
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 	if err := prune(dir, uid, now.Add(-14*24*time.Hour)); err != nil {
 		Warn(warnings, fmt.Errorf("command log retention: %w", err))
 	}

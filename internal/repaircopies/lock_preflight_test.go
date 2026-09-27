@@ -55,7 +55,7 @@ func TestChecksLocksBeforeReadingPayloadsOrConfirming(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer unix.Close(fd)
+				defer func() { _ = unix.Close(fd) }()
 				for _, root := range roots {
 					if _, err := unix.InotifyAddWatch(fd, filepath.Join(root, "books/item"), unix.IN_OPEN); err != nil {
 						t.Fatal(err)
@@ -101,7 +101,7 @@ func TestCleanRunLockPrerequisite(t *testing.T) {
 		for _, preview := range []bool{false, true} {
 			t.Run(fmt.Sprintf("mirrors=%d/preview=%t", count, preview), func(t *testing.T) {
 				var roots []string
-				for i := 0; i < count; i++ {
+				for range count {
 					root := t.TempDir()
 					roots = append(roots, root)
 					if err := os.Chmod(root, 0700); err != nil {

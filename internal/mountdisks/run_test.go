@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -100,7 +101,7 @@ func (f *fakeSystem) Output(_ context.Context, name string, args ...string) ([]b
 	case "blkid":
 		return []byte(f.filesystem + "\n"), nil
 	case "findmnt":
-		if hasArgument(args, "--list") {
+		if slices.Contains(args, "--list") {
 			filesystems := []inventory.Mount{{Source: "rootfs", Target: "/"}}
 			if f.mounted || f.wrongMountSource {
 				source := f.mapperPath
@@ -114,7 +115,7 @@ func (f *fakeSystem) Output(_ context.Context, name string, args ...string) ([]b
 			}
 			return json.Marshal(inventory.MountDocument{Filesystems: filesystems})
 		}
-		if hasArgument(args, "--target") && f.mounted {
+		if slices.Contains(args, "--target") && f.mounted {
 			return []byte(f.mapperPath + "\n"), nil
 		}
 		return nil, fakeExitError{code: 1}
@@ -204,15 +205,6 @@ type fakeExitError struct{ code int }
 
 func (e fakeExitError) Error() string { return "fake command failed" }
 func (e fakeExitError) ExitCode() int { return e.code }
-
-func hasArgument(args []string, wanted string) bool {
-	for _, arg := range args {
-		if arg == wanted {
-			return true
-		}
-	}
-	return false
-}
 
 func writeConfig(t *testing.T, identifiers ...string) string {
 	t.Helper()
@@ -456,7 +448,7 @@ func TestMountedRootsReturnsOnlyConfiguredMountedDisks(t *testing.T) {
 func countCalls(calls []recordedCall, name, argument string) int {
 	count := 0
 	for _, call := range calls {
-		if call.name == name && (argument == "" || hasArgument(call.args, argument)) {
+		if call.name == name && (argument == "" || slices.Contains(call.args, argument)) {
 			count++
 		}
 	}

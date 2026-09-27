@@ -57,7 +57,7 @@ func TestConfiguredMirrorConsensus(t *testing.T) {
 
 func TestScanAndRepairMissingMalformedMetadataWithoutIngest(t *testing.T) {
 	for _, value := range [][]byte{nil, {}, {0xff, 0, 0x80}, []byte("truncated")} {
-		t.Run(string(checksumBytes(value)[:8]), func(t *testing.T) {
+		t.Run(checksumBytes(value)[:8], func(t *testing.T) {
 			roots := []string{t.TempDir(), t.TempDir(), t.TempDir()}
 			good := checksumBytes([]byte("good"))
 			for _, root := range roots {
@@ -116,8 +116,8 @@ func TestScanAndRepairMissingMalformedMetadataWithoutIngest(t *testing.T) {
 			if _, err := temp.WriteString("partial copy"); err != nil {
 				t.Fatal(err)
 			}
-			temp.Close()
-			root.Close()
+			_ = temp.Close()
+			_ = root.Close()
 			observations, err = Scan(context.Background(), testRoots(t, roots))
 			if err != nil {
 				t.Fatal(err)
@@ -234,7 +234,7 @@ func TestReservedNamespaceCollisionStopsBeforeMutation(t *testing.T) {
 		t.Fatal(err)
 	}
 	if rs, err := rootfs.OpenSet(context.Background(), []string{root}); err == nil {
-		rs.Close()
+		_ = rs.Close()
 		t.Fatal("unmarked reserved user directory was adopted")
 	}
 	data, err := os.ReadFile(path)
@@ -292,7 +292,7 @@ func TestCancellationDuringReplacementNeverPublishesPartialData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	if err := os.WriteFile(filepath.Join(path, "item"), []byte("old"), 0600); err != nil {
 		t.Fatal(err)
 	}

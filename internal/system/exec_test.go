@@ -46,7 +46,7 @@ func init() {
 
 // Helpers are this test binary, never storage tools. The timeout also bounds
 // their lifetime on an unfixed runner; tests explicitly kill recorded survivors.
-func TestExecHelper(t *testing.T) {
+func TestExecHelper(_ *testing.T) {
 	mode := os.Getenv("MIRROR_EXEC_HELPER")
 	if mode == "" {
 		return
@@ -72,7 +72,7 @@ func TestExecHelper(t *testing.T) {
 			os.Exit(91)
 		}
 		if mode != "spawn" {
-			for i := 0; i < 500; i++ {
+			for range 500 {
 				if _, err := os.Stat(os.Getenv("MIRROR_EXEC_READY")); err == nil {
 					os.Exit(0)
 				}
@@ -86,7 +86,7 @@ func TestExecHelper(t *testing.T) {
 		if err != nil {
 			os.Exit(93)
 		}
-		fmt.Fprintf(os.Stdout, "%q|%s|%s", os.Args[len(os.Args)-1], os.Getenv("LC_ALL"), data)
+		_, _ = fmt.Fprintf(os.Stdout, "%q|%s|%s", os.Args[len(os.Args)-1], os.Getenv("LC_ALL"), data)
 		fmt.Fprint(os.Stderr, "diagnostic")
 		os.Exit(23)
 	default:
@@ -113,7 +113,7 @@ func TestExecOwnsHelperLifetime(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer file.Close()
+				defer func() { _ = file.Close() }()
 				done := make(chan error, 1)
 				go func() {
 					if capture {
@@ -138,8 +138,8 @@ func TestExecOwnsHelperLifetime(t *testing.T) {
 				}
 				pidfd, err := unix.PidfdOpen(pid, 0)
 				if err == nil {
-					defer unix.Close(pidfd)
-					defer unix.PidfdSendSignal(pidfd, unix.SIGKILL, nil, 0)
+					defer func() { _ = unix.Close(pidfd) }()
+					defer func() { _ = unix.PidfdSendSignal(pidfd, unix.SIGKILL, nil, 0) }()
 				} else if !errors.Is(err, unix.ESRCH) {
 					cancel()
 					<-done

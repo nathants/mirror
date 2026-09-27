@@ -55,7 +55,7 @@ func TestCopyHandlersRunRealWorkflowsThroughCLIStreams(t *testing.T) {
 			assertLock := func() {
 				lock, err := operationlock.Acquire(ctx, home, os.Geteuid(), os.Getegid())
 				if err == nil {
-					lock.Close()
+					_ = lock.Close()
 					t.Fatal("workflow lacks operation lock")
 				}
 				if !strings.Contains(err.Error(), "another mirror operation") {

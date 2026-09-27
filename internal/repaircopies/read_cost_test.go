@@ -42,7 +42,7 @@ func TestMetadataRepairDoesNotRehashToRediscoverSources(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer unix.Close(fd)
+			defer func() { _ = unix.Close(fd) }()
 			watches := make(map[int]string)
 			for _, root := range roots {
 				// Including closes prevents adjacent identical opens from being

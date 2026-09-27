@@ -49,7 +49,7 @@ func (r *Root) Check() error {
 	if err != nil {
 		return err
 	}
-	defer current.Close()
+	defer func() { _ = current.Close() }()
 	before, err := r.file.Stat()
 	if err != nil {
 		return err
@@ -82,18 +82,12 @@ func (r *Root) openFile(path string, flags int, mode os.FileMode) (*os.File, err
 	}
 	return os.NewFile(uintptr(fd), filepath.Join(r.path, path)), nil
 }
-func (r *Root) ReadFile(path string, limit int64) ([]byte, error) {
-	if err := r.Check(); err != nil {
-		return nil, err
-	}
-	return r.readFile(path, limit)
-}
 func (r *Root) readFile(path string, limit int64) ([]byte, error) {
 	f, err := r.openFile(path, unix.O_RDONLY|unix.O_NONBLOCK, 0)
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
 		return nil, err
@@ -115,7 +109,7 @@ func (r *Root) Stat(path string) (os.FileInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return f.Stat()
 }
 func (r *Root) ReadDir(path string) ([]os.DirEntry, error) {
@@ -123,7 +117,7 @@ func (r *Root) ReadDir(path string) ([]os.DirEntry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	entries, err := f.ReadDir(-1)
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
 	return entries, err
@@ -140,7 +134,7 @@ func (r *Root) Mkdir(path string, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if err := unix.Mkdirat(int(f.Fd()), name, uint32(mode.Perm())); err != nil {
 		return err
 	}
@@ -182,7 +176,7 @@ func (r *Root) Remove(path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return unix.Unlinkat(int(f.Fd()), name, 0)
 }
 func (r *Root) Link(old, new string) error {
@@ -190,12 +184,12 @@ func (r *Root) Link(old, new string) error {
 	if err != nil {
 		return err
 	}
-	defer a.Close()
+	defer func() { _ = a.Close() }()
 	b, bn, err := r.parent(new)
 	if err != nil {
 		return err
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 	return unix.Linkat(int(a.Fd()), an, int(b.Fd()), bn, 0)
 }
 func (r *Root) Rename(old, new string, noReplace bool) error {
@@ -203,12 +197,12 @@ func (r *Root) Rename(old, new string, noReplace bool) error {
 	if err != nil {
 		return err
 	}
-	defer a.Close()
+	defer func() { _ = a.Close() }()
 	b, bn, err := r.parent(new)
 	if err != nil {
 		return err
 	}
-	defer b.Close()
+	defer func() { _ = b.Close() }()
 	flags := uint(0)
 	if noReplace {
 		flags = unix.RENAME_NOREPLACE
@@ -289,7 +283,7 @@ func (r *Root) Readlink(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	buffer := make([]byte, 4096)
 	n, err := unix.Readlinkat(int(f.Fd()), name, buffer)
 	if err != nil {
@@ -305,7 +299,7 @@ func (r *Root) Symlink(target, path string) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return unix.Symlinkat(target, int(f.Fd()), name)
 }
 

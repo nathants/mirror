@@ -13,7 +13,7 @@ import (
 )
 
 // Device-free tests of the same runners used by the opt-in VM lifecycle.
-func TestRunnerHelper(t *testing.T) {
+func TestRunnerHelper(_ *testing.T) {
 	mode := os.Getenv("MIRROR_RUNNER_HELPER")
 	if mode == "" {
 		return
@@ -29,7 +29,7 @@ func TestRunnerHelper(t *testing.T) {
 		// Split prompt writes and repeated prompts exercise retained search state.
 		input := bufio.NewReader(os.Stdin)
 		for _, answer := range []string{"one", "two"} {
-			fmt.Fprint(os.Stdout, "pro")
+			_, _ = fmt.Fprint(os.Stdout, "pro")
 			time.Sleep(5 * time.Millisecond)
 			fmt.Fprint(os.Stderr, "mpt:")
 			line, err := input.ReadString('\n')
@@ -37,7 +37,7 @@ func TestRunnerHelper(t *testing.T) {
 				os.Exit(91)
 			}
 		}
-		fmt.Fprintln(os.Stdout, "answers-ok")
+		_, _ = fmt.Fprintln(os.Stdout, "answers-ok")
 		if mode == "success" {
 			os.Exit(0)
 		}

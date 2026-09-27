@@ -51,7 +51,7 @@ func TestGuardCleanupStaysOnOriginalFilesystem(t *testing.T) {
 			if err := root.EnsureInternal(); err != nil {
 				t.Fatal(err)
 			}
-			root.Close()
+			_ = root.Close()
 			guard, err := openTestGuard(t, []string{path}, []string{path})
 			if err != nil {
 				t.Fatal(err)
@@ -203,7 +203,7 @@ func TestGuardRejectsDestinationsOutsideRoots(t *testing.T) {
 	}
 	guard, err := openTestGuard(t, []string{path}, []string{path, outside})
 	if guard != nil {
-		guard.roots.Close()
+		_ = guard.roots.Close()
 		t.Fatal("returned a guard with an unpinned destination")
 	}
 	if err == nil {
@@ -225,7 +225,7 @@ func TestGuardPreflightRejectsUnmarkedInternalState(t *testing.T) {
 	}
 	guard, err := openTestGuard(t, paths, paths)
 	if guard != nil {
-		guard.roots.Close()
+		_ = guard.roots.Close()
 	}
 	if err == nil {
 		t.Fatal("guard adopted unmarked private namespace")

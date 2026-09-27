@@ -45,7 +45,7 @@ func TestTerminalOutputHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tty.Close()
+	defer func() { _ = tty.Close() }()
 	original, err := unix.IoctlGetTermios(int(tty.Fd()), unix.TCGETS)
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +83,7 @@ func TestTerminalOutputHelper(t *testing.T) {
 		clear(password)
 		checkModes()
 	}
-	fmt.Fprintln(tty, "output-tests-finished")
+	_, _ = fmt.Fprintln(tty, "output-tests-finished")
 }
 
 func TestTerminalOutputFailuresRestoreModesAndDiscardPassword(t *testing.T) {
@@ -91,7 +91,7 @@ func TestTerminalOutputFailuresRestoreModesAndDiscardPassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer master.Close()
+	defer func() { _ = master.Close() }()
 	if err := unix.IoctlSetPointerInt(int(master.Fd()), unix.TIOCSPTLCK, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestTerminalOutputFailuresRestoreModesAndDiscardPassword(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer slave.Close()
+	defer func() { _ = slave.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestTerminalOutputHelper$")

@@ -16,7 +16,7 @@ func TestLockIsExclusiveAndReleasedOnClose(t *testing.T) {
 	}
 	second, err := Acquire(context.Background(), home, os.Getuid(), os.Getgid())
 	if second != nil {
-		second.Close()
+		_ = second.Close()
 	}
 	if err == nil || !strings.Contains(err.Error(), "another mirror operation") {
 		t.Fatalf("concurrent lock: %v", err)
@@ -25,12 +25,12 @@ func TestLockIsExclusiveAndReleasedOnClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first.Close()
+	_ = first.Close()
 	next, err := Acquire(context.Background(), home, os.Getuid(), os.Getgid())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer next.Close()
+	defer func() { _ = next.Close() }()
 	after, err := next.Stat()
 	if err != nil {
 		t.Fatal(err)
@@ -61,7 +61,7 @@ func TestLockRejectsSymlinksAndHardlinks(t *testing.T) {
 			}
 			lock, err := Acquire(context.Background(), home, os.Getuid(), os.Getgid())
 			if lock != nil {
-				lock.Close()
+				_ = lock.Close()
 			}
 			if err == nil {
 				t.Fatal("unsafe lock accepted")

@@ -49,7 +49,7 @@ func Open(home, operation string, uid, gid int, output io.Writer) (*Log, error) 
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	created := false
 	if err := root.Mkdir(directory, 0700); err == nil {
 		created = true
@@ -78,16 +78,16 @@ func Open(home, operation string, uid, gid int, output io.Writer) (*Log, error) 
 		return nil, err
 	}
 	if err := errors.Join(file.Chown(uid, gid), file.Sync(), root.SyncDir(directory)); err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
 	log := &Log{file: file, path: filepath.Join(home, path), output: output}
 	if err := log.record(event{Kind: "operation", Name: operation, Status: "started", Text: "No automatic rollback. An action with no result is uncertain; inspect current state before manual intervention."}); err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
 	if _, err := fmt.Fprintf(output, "action log: %s\n", log.path); err != nil {
-		file.Close()
+		_ = file.Close()
 		return nil, err
 	}
 	return log, nil

@@ -28,8 +28,8 @@ func Warn(output io.Writer, err error) {
 			return
 		}
 		duplicate := os.NewFile(uintptr(fd), file.Name())
-		defer duplicate.Close()
+		defer func() { _ = duplicate.Close() }()
 		output = duplicate
 	}
-	fmt.Fprintln(output, "warning:", err)
+	_, _ = fmt.Fprintln(output, "warning:", err)
 }

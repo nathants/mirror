@@ -126,7 +126,7 @@ func execute(
 	var command commandLine
 	parser, err := arg.NewParser(arg.Config{Program: "mirror", IgnoreEnv: true}, &command)
 	if err != nil {
-		fmt.Fprintln(stderr, "fatal:", err)
+		_, _ = fmt.Fprintln(stderr, "fatal:", err)
 		return 1
 	}
 	if err := parser.Parse(arguments); err != nil {
@@ -134,12 +134,12 @@ func execute(
 			parser.WriteHelp(stdout)
 			return 0
 		}
-		fmt.Fprintln(stderr, "error:", err)
+		_, _ = fmt.Fprintln(stderr, "error:", err)
 		parser.WriteHelp(stderr)
 		return 2
 	}
 	if parser.Subcommand() == nil {
-		fmt.Fprintln(stderr, "error: a subcommand is required")
+		_, _ = fmt.Fprintln(stderr, "error: a subcommand is required")
 		parser.WriteHelp(stderr)
 		return 2
 	}
@@ -204,7 +204,7 @@ func execute(
 		return 0
 	}
 	if !errors.Is(runErr, errDeclined) {
-		fmt.Fprintln(stderr, "fatal:", runErr)
+		_, _ = fmt.Fprintln(stderr, "fatal:", runErr)
 	}
 	return 1
 }

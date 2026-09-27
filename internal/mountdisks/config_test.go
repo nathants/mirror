@@ -79,7 +79,7 @@ func TestConfigRejectsUnsafeInputsBeforeInventory(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer listener.Close()
+				defer func() { _ = listener.Close() }()
 			case "symlink":
 				if err := os.Symlink(writeConfig(t, system.identifier), path); err != nil {
 					t.Fatal(err)

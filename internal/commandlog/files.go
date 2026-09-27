@@ -22,7 +22,7 @@ func openDirectory(home string, uid, gid int) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	created := false
 	if err := root.Mkdir(directory, 0700); err == nil {
 		created = true
@@ -44,7 +44,7 @@ func openDirectory(home string, uid, gid int) (*os.File, error) {
 		err = errors.New("command log directory must be private (0700) and owned by the caller")
 	}
 	if err != nil {
-		dir.Close()
+		_ = dir.Close()
 		return nil, err
 	}
 	// All creation/pruning below uses this validated descriptor, not a reopened
@@ -80,7 +80,7 @@ func createFile(dir *os.File, uid, gid int, now time.Time) (*os.File, error) {
 		// Hold a per-file lock until close so another invocation cannot prune an
 		// active command, even if it has been silent for more than 14 days.
 		if err := errors.Join(file.Chown(uid, gid), unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB)); err != nil {
-			file.Close()
+			_ = file.Close()
 			return nil, err
 		}
 		return file, nil
@@ -136,7 +136,7 @@ func pruneFile(dir *os.File, name string, uid int, cutoff time.Time) error {
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	if err := unix.Flock(int(file.Fd()), unix.LOCK_EX|unix.LOCK_NB); err != nil {
 		if errors.Is(err, unix.EWOULDBLOCK) {
 			return nil

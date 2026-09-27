@@ -16,8 +16,8 @@ func TestLoggingUnavailableWithBrokenStderrDoesNotPreventHelp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	read.Close()
-	defer write.Close()
+	_ = read.Close()
+	defer func() { _ = write.Close() }()
 	child.Stderr = write
 	if err := child.Run(); err != nil || !strings.Contains(output.String(), "Usage: mirror") {
 		t.Fatalf("logging warning prevented help: %v, %q", err, output.String())

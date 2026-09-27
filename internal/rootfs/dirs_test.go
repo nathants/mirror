@@ -22,7 +22,7 @@ func TestPinnedDirectoryWalkSkipsPrivateStateAndSymlinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	if err := root.EnsureInternal(); err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestPinnedDirectoryWalkUsesOpenedDirectoryForMutation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	err = root.WalkPinnedDirs(context.Background(), func(rel string, dir *os.File) error {
 		if rel == "a/child" {
 			if err := os.Rename(filepath.Join(path, "a"), original); err != nil {

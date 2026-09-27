@@ -31,7 +31,7 @@ func TestBrokenStderrHelper(t *testing.T) {
 	case "close warning":
 		file.closeErr = errors.New("log close failed")
 		log.Close(0)
-		fmt.Fprintln(os.Stdout, "command continued")
+		_, _ = fmt.Fprintln(os.Stdout, "command continued")
 	case "ordinary output":
 		// Warning suppression must not change SIGPIPE handling for real output.
 		_, _ = io.WriteString(log.Writer("stderr", os.Stderr), "real command diagnostic\n")
@@ -48,8 +48,8 @@ func TestWarningsCannotTerminateCommandOnBrokenStderr(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			read.Close()
-			defer write.Close()
+			_ = read.Close()
+			defer func() { _ = write.Close() }()
 			cmd := exec.Command(os.Args[0], "-test.run=^TestBrokenStderrHelper$")
 			cmd.Env = append(os.Environ(), "MIRROR_LOG_BROKEN_STDERR="+mode, "GORACE=atexit_sleep_ms=0")
 			var stdout bytes.Buffer
@@ -72,7 +72,7 @@ func TestWarningPreservesOriginalOutputDescriptor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	logFile := &failingFile{}
 	log := &Log{file: logFile, warnings: io.Discard}
 	Warn(log.Writer("stderr", file), errors.New("logging unavailable"))

@@ -117,7 +117,7 @@ func TestDiskFailuresWarnWithoutFailingOutput(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			var output, warnings bytes.Buffer
 			log := &Log{file: &test.file, warnings: &warnings}
-			for i := 0; i < 2; i++ {
+			for range 2 {
 				if n, err := io.WriteString(log.Writer("stdout", &output), "visible\n"); n != 8 || err != nil {
 					t.Fatalf("logging failure escaped to the command: %d, %v", n, err)
 				}
@@ -175,7 +175,7 @@ func TestConcurrentStreamsRemainComplete(t *testing.T) {
 		wg.Add(1)
 		go func(stream string) {
 			defer wg.Done()
-			for i := 0; i < 100; i++ {
+			for range 100 {
 				if _, err := io.WriteString(log.Writer(stream, &output), stream+"\n"); err != nil {
 					t.Error(err)
 				}
@@ -203,7 +203,7 @@ func TestUnwrapPreservesOriginalFileDescriptor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 	log := &Log{file: &failingFile{}, warnings: io.Discard}
 	wrapped := log.Writer("stdout", log.Writer("stdout", file))
 	if Unwrap(wrapped) != file || Unwrap(file) != file {

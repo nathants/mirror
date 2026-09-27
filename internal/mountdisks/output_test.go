@@ -33,13 +33,12 @@ func TestMountWorkflowsStopOnOutputFailure(t *testing.T) {
 				reads := 0
 				option := options(t, func() ([]byte, error) { reads++; return []byte("secret"), nil }, fake.identifier, "a74a2821-168e-4475-87a9-ab6f2e4e9714")
 				input := strings.NewReader(operation + "\n")
-				var out, stderr io.Writer = io.Discard, io.Discard
 				matches := map[string]string{"missing": "drive not found", "heading": "going to", "table": "DISK", "prompt": "to confirm:", "decline": "aborting", "success": "mounted /dev/"}
 				if operation == "unmount" {
 					matches["success"] = "closed /dev/"
 				}
 				writer := &failingDisplay{match: matches[stage]}
-				out = writer
+				var out, stderr io.Writer = writer, io.Discard
 				if stage == "missing" {
 					out, stderr = io.Discard, writer
 				}

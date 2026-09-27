@@ -48,8 +48,11 @@ func RunCommand(ctx context.Context, cmd *exec.Cmd) (returnErr error) {
 	// Our own PID is not a child. ECHILD proves this wait mode is available
 	// without consuming any child status; refuse seccomp/unsupported failures.
 	var info unix.Siginfo
-	if err := unix.Waitid(unix.P_PID, os.Getpid(), &info, unix.WEXITED|unix.WNOWAIT|unix.WNOHANG, nil); !errors.Is(err, unix.ECHILD) {
-		return fmt.Errorf("preflight non-reaping wait: expected ECHILD, got %v", err)
+	switch err := unix.Waitid(unix.P_PID, os.Getpid(), &info, unix.WEXITED|unix.WNOWAIT|unix.WNOHANG, nil); {
+	case err == nil:
+		return errors.New("preflight non-reaping wait: expected ECHILD, got success")
+	case !errors.Is(err, unix.ECHILD):
+		return fmt.Errorf("preflight non-reaping wait: expected ECHILD: %w", err)
 	}
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	tty, err := commandTerminal()
@@ -186,9 +189,13 @@ func commandTerminal() (*os.File, error) {
 		return nil, fmt.Errorf("open controlling terminal: %w", err)
 	}
 	foreground, err := unix.IoctlGetInt(int(tty.Fd()), unix.TIOCGPGRP)
-	if err != nil || foreground != unix.Getpgrp() {
+	if err != nil {
 		_ = tty.Close()
-		return nil, fmt.Errorf("command requires ownership of the foreground terminal (group %d): %v", foreground, err)
+		return nil, fmt.Errorf("command requires ownership of the foreground terminal: %w", err)
+	}
+	if foreground != unix.Getpgrp() {
+		_ = tty.Close()
+		return nil, fmt.Errorf("command requires ownership of the foreground terminal (group %d)", foreground)
 	}
 	return tty, nil
 }

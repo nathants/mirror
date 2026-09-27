@@ -32,9 +32,10 @@ func TestEnsurePublishesEachDestinationOnceAndSkipsInternalState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	file.WriteString("partial")
-	file.Close()
-	root.Close()
+	_, writeErr := file.WriteString("partial")
+	if err := errors.Join(writeErr, file.Close(), root.Close()); err != nil {
+		t.Fatal(err)
+	}
 	rs := testRoots(t, paths)
 	actions, err := plan(context.Background(), rs)
 	if err != nil {

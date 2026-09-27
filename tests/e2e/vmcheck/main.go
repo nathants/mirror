@@ -183,8 +183,8 @@ func postcheck(targetDisk string) error {
 	}
 	reservedBlocks := ""
 	for _, line := range strings.Split(filesystemState, "\n") {
-		if strings.HasPrefix(line, "Reserved block count:") {
-			reservedBlocks = strings.TrimSpace(strings.TrimPrefix(line, "Reserved block count:"))
+		if value, ok := strings.CutPrefix(line, "Reserved block count:"); ok {
+			reservedBlocks = strings.TrimSpace(value)
 			break
 		}
 	}

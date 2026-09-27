@@ -24,11 +24,11 @@ func openRegular(root *rootfs.Root, path string) (*os.File, error) {
 	}
 	info, err := f.Stat()
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, err
 	}
 	if !info.Mode().IsRegular() {
-		f.Close()
+		_ = f.Close()
 		return nil, fmt.Errorf("not a regular file: %s", f.Name())
 	}
 	return f, nil
@@ -210,8 +210,7 @@ func scanRoot(ctx context.Context, root *rootfs.Root, progress func(string, stri
 				result.entries[rel] = entrySymlink
 			case entry.Type().IsRegular():
 				result.entries[rel] = entryRegular
-				if strings.HasSuffix(rel, checksumSuffix) {
-					dataPath := strings.TrimSuffix(rel, checksumSuffix)
+				if dataPath, ok := strings.CutSuffix(rel, checksumSuffix); ok {
 					if err := validateDataPath(dataPath); err != nil {
 						return fmt.Errorf("invalid sidecar %q: .b2sum is reserved for checksum sidecars of regular payload files: %w", filepath.Join(root.Path(), rel), err)
 					}

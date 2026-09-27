@@ -16,7 +16,7 @@ func TestRunWritesOneDiskAtATime(t *testing.T) {
 		t.Run(fmt.Sprint(count), func(t *testing.T) {
 			home := t.TempDir()
 			var roots []string
-			for i := 0; i < count; i++ {
+			for range count {
 				root := t.TempDir()
 				roots = append(roots, root)
 				if err := os.Mkdir(filepath.Join(root, "books"), 0700); err != nil {

@@ -133,7 +133,7 @@ func TestJournalRejectsInvalidCompleteRecords(t *testing.T) {
 				t.Fatal("corrupt complete record was treated as an interrupted tail")
 			}
 			if j, err := OpenJournal(path); err == nil {
-				j.Close()
+				_ = j.Close()
 				t.Fatal("corrupt records were compacted away")
 			}
 			if !bytes.Equal(data, readJournalBytes(t, path)) {
@@ -161,12 +161,12 @@ func TestJournalWriteFailurePoisonsFurtherAppends(t *testing.T) {
 	if err := j.Append(Progress{Repair: &i, State: RepairStarted}); err == nil || !strings.Contains(err.Error(), "uncertain") {
 		t.Fatalf("write failure not reported as uncertain: %v", err)
 	}
-	j.file.Close()
+	_ = j.file.Close()
 	j.file, err = os.OpenFile(path, os.O_RDWR|os.O_APPEND, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer j.Close()
+	defer func() { _ = j.Close() }()
 	if err := j.Append(Progress{Repair: &i, State: RepairStarted}); err == nil {
 		t.Fatal("journal continued after a persistence failure")
 	}
@@ -184,7 +184,7 @@ func TestJournalRefusesChangedFileAndIncompleteSnapshot(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer j.Close()
+			defer func() { _ = j.Close() }()
 			original := readJournalBytes(t, path)
 			switch change {
 			case "replacement":
@@ -230,12 +230,12 @@ func TestJournalFailedAndCompletedTransitionsSurviveCompaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	j.Close()
+	_ = j.Close()
 	j, err = OpenJournal(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer j.Close()
+	defer func() { _ = j.Close() }()
 	if !reflect.DeepEqual(j.log, want) {
 		t.Fatal("compaction lost failure evidence")
 	}

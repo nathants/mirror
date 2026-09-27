@@ -25,7 +25,7 @@ func TestExecTerminalHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer tty.Close()
+	defer func() { _ = tty.Close() }()
 	if mode == "read" || mode == "hold" {
 		foreground, err := unix.IoctlGetInt(int(tty.Fd()), unix.TIOCGPGRP)
 		if err != nil || foreground != unix.Getpgrp() || unix.Getpgrp() != os.Getpid() {
@@ -40,13 +40,13 @@ func TestExecTerminalHelper(t *testing.T) {
 		if err := unix.IoctlSetTermios(int(tty.Fd()), unix.TCSETS, termios); err != nil {
 			t.Fatal(err)
 		}
-		defer unix.IoctlSetTermios(int(tty.Fd()), unix.TCSETS, &original)
+		defer func() { _ = unix.IoctlSetTermios(int(tty.Fd()), unix.TCSETS, &original) }()
 		if mode == "hold" {
-			fmt.Fprint(os.Stdout, "hold-ready")
+			_, _ = fmt.Fprint(os.Stdout, "hold-ready")
 			time.Sleep(3 * time.Second)
 			return
 		}
-		fmt.Fprintln(tty, "test password:")
+		_, _ = fmt.Fprintln(tty, "test password:")
 		data := make([]byte, 64)
 		n, err := tty.Read(data)
 		if err != nil || string(data[:n]) != "private-test-password\n" {
@@ -96,7 +96,7 @@ func TestExecTerminalHelper(t *testing.T) {
 		t.Fatal("invalid executable succeeded")
 	}
 	checkForeground()
-	fmt.Fprintln(tty, "terminal-session-ok")
+	_, _ = fmt.Fprintln(tty, "terminal-session-ok")
 }
 
 type terminalCancelWriter struct {
@@ -117,7 +117,7 @@ func TestExecPreservesControllingTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer master.Close()
+	defer func() { _ = master.Close() }()
 	if err := unix.IoctlSetPointerInt(int(master.Fd()), unix.TIOCSPTLCK, 0); err != nil {
 		t.Fatal(err)
 	}
@@ -129,7 +129,7 @@ func TestExecPreservesControllingTerminal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer slave.Close()
+	defer func() { _ = slave.Close() }()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	// Only this test fixture creates a session; the actual nested commands use

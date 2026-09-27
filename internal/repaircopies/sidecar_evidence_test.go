@@ -96,7 +96,7 @@ func TestSidecarOnlyEvidenceSurvivesLogResumeAndCompletion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer j.Close()
+	defer func() { _ = j.Close() }()
 	lockTestRoots(t, roots)
 	for range 2 { // Desired target state remains resumable; evidence stays unchanged.
 		if err := ValidateCurrentState(context.Background(), loaded, testRoots(t, roots)); err != nil {

@@ -38,7 +38,7 @@ func TestRunChecksLocksBeforeReadingPayloads(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer unix.Close(fd)
+				defer func() { _ = unix.Close(fd) }()
 				if _, err := unix.InotifyAddWatch(fd, filepath.Join(roots[0], "books/item"), unix.IN_OPEN); err != nil {
 					t.Fatal(err)
 				}

@@ -88,7 +88,7 @@ func TestSignalsCancelRealCopyRepairAndLockEntrypoints(t *testing.T) {
 						break
 					}
 					if time.Now().After(deadline) {
-						child.Process.Kill()
+						_ = child.Process.Kill()
 						<-done
 						t.Fatalf("inventory not reached: %s", output.String())
 					}
@@ -103,7 +103,7 @@ func TestSignalsCancelRealCopyRepairAndLockEntrypoints(t *testing.T) {
 						t.Fatal("cancelled command reported success")
 					}
 				case <-time.After(3 * time.Second):
-					child.Process.Kill()
+					_ = child.Process.Kill()
 					<-done
 					t.Fatal("entrypoint ignored cancellation")
 				}
@@ -116,7 +116,7 @@ func TestSignalsCancelRealCopyRepairAndLockEntrypoints(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				lock.Close()
+				_ = lock.Close()
 			})
 		}
 	}
@@ -129,7 +129,7 @@ func TestAllUnprivilegedCommandsUseSharedOperationLock(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer lock.Close()
+			defer func() { _ = lock.Close() }()
 			if err := child.Run(); err == nil || !strings.Contains(output.String(), "another mirror operation") {
 				t.Fatalf("did not refuse contention: %v %s", err, output.String())
 			}

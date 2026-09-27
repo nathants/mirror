@@ -89,7 +89,7 @@ func rawTTY() (*os.File, func() error, error) {
 	}
 	old, err := unix.IoctlGetTermios(int(f.Fd()), unix.TCGETS)
 	if err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, nil, err
 	}
 	raw := *old
@@ -101,7 +101,7 @@ func rawTTY() (*os.File, func() error, error) {
 	raw.Cc[unix.VMIN] = 1
 	raw.Cc[unix.VTIME] = 0
 	if err := unix.IoctlSetTermios(int(f.Fd()), unix.TCSETS, &raw); err != nil {
-		f.Close()
+		_ = f.Close()
 		return nil, nil, err
 	}
 	restore := func() error { return errors.Join(unix.IoctlSetTermios(int(f.Fd()), unix.TCSETS, old), f.Close()) }

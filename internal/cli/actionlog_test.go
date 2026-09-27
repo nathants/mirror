@@ -20,7 +20,7 @@ func TestDiskOperationLogsRemainInsideCallerLock(t *testing.T) {
 	err := withLoggedDiskOperation(context.Background(), caller, "mount", &output, func(observed *actionlog.System) error {
 		lock, err := operationlock.Acquire(context.Background(), home, os.Getuid(), os.Getgid())
 		if lock != nil {
-			lock.Close()
+			_ = lock.Close()
 		}
 		if err == nil {
 			t.Fatal("action logging ran outside the operation lock")
@@ -47,5 +47,5 @@ func TestDiskOperationLogsRemainInsideCallerLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lock.Close()
+	_ = lock.Close()
 }

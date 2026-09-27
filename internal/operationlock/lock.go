@@ -23,7 +23,7 @@ func Acquire(ctx context.Context, home string, uid, gid int) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	created := false
 	if err := root.Mkdir(".mirror", 0700); err == nil {
 		created = true
@@ -51,7 +51,7 @@ func Acquire(ctx context.Context, home string, uid, gid int) (*os.File, error) {
 	file, err := root.OpenFile(lockPath, unix.O_RDWR|unix.O_CREAT|unix.O_EXCL, 0600)
 	if err == nil {
 		if err := file.Chown(uid, gid); err != nil {
-			file.Close()
+			_ = file.Close()
 			return nil, err
 		}
 	} else if errors.Is(err, os.ErrExist) {
@@ -60,7 +60,7 @@ func Acquire(ctx context.Context, home string, uid, gid int) (*os.File, error) {
 	if err != nil {
 		return nil, err
 	}
-	fail := func(err error) (*os.File, error) { file.Close(); return nil, err }
+	fail := func(err error) (*os.File, error) { _ = file.Close(); return nil, err }
 	if err := unix.Fstat(int(file.Fd()), &stat); err != nil {
 		return fail(err)
 	}

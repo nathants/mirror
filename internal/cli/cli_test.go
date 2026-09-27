@@ -253,7 +253,7 @@ func TestPrivilegedHandlersUseTheSameCallerLock(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer lock.Close()
+	defer func() { _ = lock.Close() }()
 	// No OS program can be found if a handler accidentally bypasses the lock.
 	t.Setenv("PATH", t.TempDir())
 	account := &user.User{Uid: strconv.Itoa(os.Getuid()), Gid: strconv.Itoa(os.Getgid()), Username: "test", HomeDir: home}

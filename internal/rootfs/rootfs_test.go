@@ -25,13 +25,13 @@ func TestNoFollowAndRootReplacement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	if err := os.Symlink(outside, filepath.Join(path, "link")); err != nil {
 		t.Fatal(err)
 	}
 	file, err := root.OpenFile("link/item", unix.O_WRONLY|unix.O_TRUNC, 0)
 	if file != nil {
-		file.Close()
+		_ = file.Close()
 	}
 	if err == nil {
 		t.Fatal("followed ancestor symlink")
@@ -56,7 +56,7 @@ func TestInternalMarkerAndNoReplace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer root.Close()
+	defer func() { _ = root.Close() }()
 	if err := root.EnsureInternal(); err != nil {
 		t.Fatal(err)
 	}
@@ -64,12 +64,12 @@ func TestInternalMarkerAndNoReplace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first.Close()
+	_ = first.Close()
 	second, secondPath, err := root.CreateTemp(Internal+"/tmp", "file-")
 	if err != nil {
 		t.Fatal(err)
 	}
-	second.Close()
+	_ = second.Close()
 	if err := root.Rename(firstPath, secondPath, true); !errors.Is(err, os.ErrExist) {
 		t.Fatalf("no-replace overwrote destination: %v", err)
 	}

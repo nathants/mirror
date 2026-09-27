@@ -205,13 +205,13 @@ func TestRetentionAndCreationUseValidatedDirectoryDescriptor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer dir.Close()
+	defer func() { _ = dir.Close() }()
 	file, err := createFile(dir, os.Geteuid(), os.Getegid(), now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	name := filepath.Base(file.Name())
-	file.Close()
+	_ = file.Close()
 	old := now.Add(-15 * 24 * time.Hour)
 	if err := os.Chtimes(file.Name(), old, old); err != nil {
 		t.Fatal(err)
@@ -243,7 +243,7 @@ func TestRetentionAndCreationUseValidatedDirectoryDescriptor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	created.Close()
+	_ = created.Close()
 	if _, err := os.Stat(filepath.Join(original, filepath.Base(created.Name()))); err != nil {
 		t.Fatalf("new log escaped the validated directory: %v", err)
 	}
@@ -252,7 +252,7 @@ func TestRetentionAndCreationUseValidatedDirectoryDescriptor(t *testing.T) {
 func TestConcurrentInvocationsDoNotOverwriteEachOther(t *testing.T) {
 	home := t.TempDir()
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()

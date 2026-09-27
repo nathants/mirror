@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -23,7 +24,7 @@ func (s *toolSystem) Output(ctx context.Context, name string, args ...string) ([
 	if name == s.failTool && (!s.recheck || len(s.probes) >= 8) {
 		return nil, s.failure
 	}
-	if contains(args, "--version") || (name == "mkfs.ext4" && contains(args, "-V")) {
+	if slices.Contains(args, "--version") || (name == "mkfs.ext4" && slices.Contains(args, "-V")) {
 		if _, ok := ctx.Deadline(); !ok {
 			s.unbounded = true
 		}
