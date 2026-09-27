@@ -1,14 +1,11 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strings"
 )
 
@@ -18,53 +15,20 @@ func main() {
 		fatal("could not locate check.go")
 	}
 	repo := filepath.Clean(filepath.Join(filepath.Dir(sourceFile), ".."))
-
-	var goFiles []string
-	if err := filepath.WalkDir(repo, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if entry.IsDir() && entry.Name() == ".git" {
-			return filepath.SkipDir
-		}
-		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".go") {
-			relative, err := filepath.Rel(repo, path)
-			if err != nil {
-				return err
-			}
-			goFiles = append(goFiles, relative)
-		}
-		return nil
-	}); err != nil {
-		fatal("find Go files: %v", err)
-	}
-	sort.Strings(goFiles)
-	format := exec.Command("gofmt", append([]string{"-l"}, goFiles...)...)
-	format.Dir = repo
-	var unformatted bytes.Buffer
-	format.Stdout = &unformatted
-	format.Stderr = os.Stderr
-	if err := format.Run(); err != nil {
-		fatal("gofmt: %v", err)
-	}
-	if unformatted.Len() != 0 {
-		fatal("Go files need formatting:\n%s", unformatted.String())
+	if _, err := exec.LookPath("libcheck"); err != nil {
+		fatal("libcheck not found; install it with: go install github.com/nathants/libcheck@latest")
 	}
 
 	checks := [][]string{
+		{"libcheck", "check"},
 		{"make", "build"},
 		{"go", "test", "./..."},
 		{"go", "test", "-race", "./..."},
-		{"go", "vet", "./..."},
-		{"staticcheck", "./..."},
 		// Standalone automation is build-constrained to avoid multiple mains in
 		// bin. Explicit file arguments keep it covered without executing a VM.
 		{"go", "test", "./bin/bake-e2e-image.go"},
 		{"go", "test", "-race", "./bin/bake-e2e-image.go"},
-		{"go", "vet", "./bin/bake-e2e-image.go"},
-		{"staticcheck", "./bin/bake-e2e-image.go"},
 		{"go", "mod", "verify"},
-		{"go", "mod", "tidy", "-diff"},
 		{"git", "diff", "--check"},
 	}
 	for _, check := range checks {
