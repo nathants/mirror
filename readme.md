@@ -26,7 +26,7 @@ Build the single `mirror` binary from the repository root after changing or clon
 make
 ```
 
-`make build` runs the same build and writes `./mirror`. `bin/mirror` is a thin launcher for that binary, available when this repository's `bin/` directory is on `PATH`.
+`make build` runs the same build and writes `./mirror`. Put the repository root on `PATH` to run that binary as `mirror`. Every build, including the one in `go run ./bin/check.go`, replaces it.
 
 ## Commands
 

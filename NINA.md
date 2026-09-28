@@ -3,8 +3,8 @@
 ## Development
 
 - Linux-only storage software: prefer simple, explicit, fail-closed state machines.
-- The compiled `cmd/mirror` binary is the only user-facing program. Add subcommands, not entrypoints; keep shared behavior in normal packages. Build with `make`.
-- Repository automation belongs in `bin/*.go`, uses only the Go standard library, and runs with `go run`. Shell is limited to thin launchers locating the repository and invoking Go or `./mirror`; no storage logic, parsing, or pipelines.
+- The compiled `cmd/mirror` binary is the only user-facing program. Add subcommands, not entrypoints; keep shared behavior in normal packages. Build with `make`; the repo-root `./mirror` it writes is the live command on `PATH`, so builds and checks replace it.
+- Repository automation belongs in `bin/*.go`, uses only the Go standard library, and runs with `go run`. Shell is limited to thin launchers locating the repository and invoking Go; no storage logic, parsing, or pipelines.
 - Run `go run ./bin/check.go` after code changes. Tests must exercise production behavior. Fast tests inject OS boundaries; never expose host block devices to destructive tools. Real storage tests use disposable images only inside an isolated VM.
 - Make hard cutovers, not compatibility paths. Command behavior and runtime formats are documented in [readme.md](readme.md).
 
